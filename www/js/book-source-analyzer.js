@@ -40,21 +40,22 @@ class BookSourceAnalyzer {
 
     /**
      * 从搜索结果URL中解析搜索格式
-     * 这是核心功能！用户手动搜索一次，把结果URL粘贴过来，我们自动解析
+     * 核心功能！用户手动搜索一次，把结果URL粘贴过来，我们自动解析
      * 
-     * 参考 legado-source-generator 的 search-capture.js:
-     * - replaceKeywordInCapturedUrl(): 从URL中替换关键词为{{key}}
-     * - replaceKeywordInCapturedBody(): 从POST body中替换关键词为{{key}}
-     * - containsKnownKeywordToken(): 检测是否包含关键词
+     * 注意：搜索结果URL中不一定包含原始搜索词（如"凡人修仙"），
+     * 所以不能依赖关键词匹配，而是通过URL参数结构来智能解析：
+     * 1. 先尝试在URL中查找编码后的关键词
+     * 2. 如果没找到，通过参数名智能判断哪个是搜索参数
+     * 3. 如果URL中没有参数，可能是POST请求
      * 
      * @param {string} searchUrl - 用户粘贴的搜索结果URL
-     * @param {string} keyword - 用户搜索的关键词（默认"凡人修仙"）
+     * @param {string} keyword - 搜索词（仅作为参考，不强制依赖）
      * @returns {object} { url: "解析后的搜索URL", method: "GET|POST", body: "POST body", charset: "编码" }
      */
     parseSearchUrl(searchUrl, keyword = '凡人修仙') {
         if (!searchUrl) return null;
         
-        // 对关键词进行URL编码（参考 legado-source-generator 的 encodeURIComponent）
+        // 对关键词进行URL编码
         const encodedKeyword = encodeURIComponent(keyword);
         
         let result = {
@@ -75,12 +76,12 @@ class BookSourceAnalyzer {
             return result;
         }
         
-        // 检查URL中是否包含编码后的关键词（参考 legado-source-generator 的 containsKnownKeywordToken）
+        // 检查URL中是否包含编码后的关键词
         const hasEncodedKeyword = searchUrl.includes(encodedKeyword);
         const hasRawKeyword = searchUrl.includes(keyword);
         
         if (hasEncodedKeyword || hasRawKeyword) {
-            // 替换关键词为{{key}}（参考 legado-source-generator 的 replaceKeywordInCapturedUrl）
+            // 替换关键词为{{key}}
             let url = searchUrl;
             
             // 先替换编码后的关键词
@@ -97,21 +98,20 @@ class BookSourceAnalyzer {
             return result;
         }
         
-        // 检查是否是POST请求的URL（没有关键词在URL中，说明可能是POST）
-        // 这种情况用户需要提供POST body
-        // 我们尝试从URL中提取可能的参数名
+        // 关键词不在URL中，通过URL参数结构智能判断
         try {
             const urlObj = new URL(searchUrl);
             const params = new URLSearchParams(urlObj.search);
             
-            // 查找可能的搜索参数名（参考 legado-source-generator 的 preferred参数名列表）
-            const preferredParams = ['q', 'query', 'wd', 'word', 'key', 'kw', 'keyword', 'search', 'searchkey', 'searchword', 'keyboard', 's', 'so', 'book', 'novel'];
+            // 优先查找常见搜索参数名
+            const preferredParams = ['q', 'query', 'wd', 'word', 'key', 'kw', 'keyword', 'search', 'searchkey', 'searchword', 'keyboard', 's', 'so', 'book', 'novel', 'name', 'title', 'text', 'value', 'input', 'find', 'f', 'k', 'w', 'str', 'string', 'content', 'sk', 'searchword', 'searchkey', 'keyword', 'keys', 'searchword', 'searchkey'];
             
+            // 先找常见搜索参数
             for (const param of preferredParams) {
                 if (params.has(param)) {
                     const value = params.get(param);
-                    // 如果参数值看起来像搜索词（不是数字、不是URL）
-                    if (value && !/^\d+$/.test(value) && !value.startsWith('http')) {
+                    // 如果参数值看起来像搜索词（不是纯数字、不是URL、长度适中）
+                    if (value && !/^\d+$/.test(value) && !value.startsWith('http') && value.length > 0 && value.length < 100) {
                         urlObj.searchParams.set(param, '{{key}}');
                         result.url = urlObj.toString();
                         result.method = 'GET';
@@ -120,14 +120,24 @@ class BookSourceAnalyzer {
                 }
             }
             
-            // 如果以上都不匹配，尝试查找任何非数字、非URL的参数值
+            // 如果常见参数没找到，找第一个非数字、非URL、非空白的参数值
             for (const [key, value] of params) {
-                if (value && !/^\d+$/.test(value) && !value.startsWith('http') && value.length > 0 && value.length < 50) {
+                if (value && !/^\d+$/.test(value) && !value.startsWith('http') && value.length > 0 && value.length < 100) {
                     urlObj.searchParams.set(key, '{{key}}');
                     result.url = urlObj.toString();
                     result.method = 'GET';
                     return result;
                 }
+            }
+            
+            // 如果所有参数值都是数字或URL，尝试找最后一个参数（很多网站把搜索词放在最后）
+            const entries = Array.from(params.entries());
+            if (entries.length > 0) {
+                const lastParam = entries[entries.length - 1];
+                urlObj.searchParams.set(lastParam[0], '{{key}}');
+                result.url = urlObj.toString();
+                result.method = 'GET';
+                return result;
             }
         } catch (e) {
             // URL解析失败，可能是非标准URL

@@ -134,6 +134,8 @@ function showSearchCaptureSection(siteUrl) {
     
     // 禁用解析按钮
     document.getElementById('parseSearchUrlBtn').disabled = true;
+    document.getElementById('parseSearchUrlBtn').textContent = '🔄 解析搜索URL';
+    document.getElementById('parseSearchUrlBtn').onclick = parseSearchUrl;
     
     // 启用打开网站按钮
     document.getElementById('openSiteBtn').disabled = false;
@@ -238,12 +240,6 @@ function onSearchUrlInput(textarea) {
         document.getElementById('step3').classList.remove('active');
         document.getElementById('step3').classList.add('done');
         document.getElementById('step4').classList.add('active');
-        
-        // 自动解析（延迟500ms，等用户粘贴完）
-        clearTimeout(textarea._parseTimer);
-        textarea._parseTimer = setTimeout(() => {
-            parseSearchUrl();
-        }, 500);
     } else {
         textarea.classList.remove('has-value');
         parseBtn.disabled = true;
@@ -253,6 +249,8 @@ function onSearchUrlInput(textarea) {
 /**
  * 解析搜索URL
  * 从用户粘贴的搜索结果URL中提取搜索格式
+ * 注意：搜索结果URL中不一定包含原始搜索词（如"凡人修仙"），
+ * 所以不能依赖关键词匹配，而是通过URL参数结构来智能解析
  */
 function parseSearchUrl() {
     const urlInput = document.getElementById('searchResultUrl');
@@ -270,6 +268,7 @@ function parseSearchUrl() {
     
     try {
         // 使用分析引擎解析搜索URL
+        // 传入搜索词作为参考，但不会硬依赖它
         const analyzer = new BookSourceAnalyzer();
         const parsed = analyzer.parseSearchUrl(url, DEFAULT_SEARCH_KEYWORD);
         
@@ -317,8 +316,9 @@ function parseSearchUrl() {
             currentResult.bookSource.searchUrl = parsed.url;
         }
         
-        // 显示"继续生成"按钮
-        parseBtn.textContent = '✅ 解析完成，继续生成书源';
+        // 按钮变为"继续生成书源"，点击后跳转到结果页
+        parseBtn.textContent = '✅ 继续生成书源';
+        parseBtn.disabled = false;
         parseBtn.onclick = continueWithCapturedUrl;
         
         showToast('✅ 搜索URL解析成功！');
