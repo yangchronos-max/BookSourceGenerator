@@ -8,17 +8,20 @@ import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 
 import java.io.IOException;
-import java.net.URLEncoder;
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * 书源分析引擎 - Android原生实现
- * 使用Jsoup解析HTML，智能检测网站结构并生成书源规则
+ * 使用Jsoup解析HTML，生成符合阅读App（legado）格式的书源JSON
+ * 
+ * 阅读App书源格式规范：
+ * - ruleSearch: { bookList, name, author, coverUrl, bookUrl, intro, kind, lastChapter, wordCount }
+ * - ruleBookInfo: { name, author, coverUrl, kind, intro, bookUrl, wordCount, lastChapter }
+ * - ruleToc: { chapterList, chapterName, chapterUrl, isVolume, updateTime }
+ * - ruleContent: { content, nextContentUrl, webJs, sourceRegex, replaceRegex }
+ * - searchUrl: 搜索URL字符串
+ * - exploreUrl: 发现URL字符串
  */
 public class BookSourceAnalyzer {
 
@@ -38,7 +41,7 @@ public class BookSourceAnalyzer {
         String title = doc.title();
         String name = (siteName != null && !siteName.isEmpty()) ? siteName : extractSiteName(url, title);
 
-        // 3. 生成书源
+        // 3. 生成符合阅读App格式的书源
         JSONObject bookSource = generateBookSource(url, name, doc, html);
 
         // 4. 返回结果
@@ -97,12 +100,13 @@ public class BookSourceAnalyzer {
     }
 
     /**
-     * 生成书源规则
+     * 生成符合阅读App格式的书源
      */
     private JSONObject generateBookSource(String url, String name, Document doc, String html) {
         JSONObject bookSource = new JSONObject();
 
         try {
+            // 基础信息
             bookSource.put("bookSourceGroup", "自动生成");
             bookSource.put("bookSourceName", name);
             bookSource.put("bookSourceUrl", cleanUrl(url));
@@ -110,32 +114,51 @@ public class BookSourceAnalyzer {
             bookSource.put("bookSourceComment", "由书源生成器自动生成");
             bookSource.put("header", "{\"User-Agent\":\"" + USER_AGENT + "\"}");
             bookSource.put("httpUserAgent", USER_AGENT);
+            bookSource.put("enabled", true);
+            bookSource.put("enabledExplore", true);
 
-            // 检测搜索URL
+            // 搜索URL
             String searchUrl = detectSearchUrl(url, doc);
-            if (searchUrl != null) putIfNotEmpty(bookSource, "searchUrl", searchUrl);
-            if (searchUrl != null) putIfNotEmpty(bookSource, "ruleSearchUrl", searchUrl);
+            if (searchUrl != null && !searchUrl.isEmpty()) {
+                bookSource.put("searchUrl", searchUrl);
+            }
 
-            // 检测搜索规则
-            putIfNotEmpty(bookSource, "ruleSearchList", detectSearchList(doc));
-            putIfNotEmpty(bookSource, "ruleSearchName", detectSearchName(doc));
-            putIfNotEmpty(bookSource, "ruleSearchAuthor", detectSearchAuthor(doc));
-            putIfNotEmpty(bookSource, "ruleSearchCoverUrl", detectSearchCover(doc));
+            // ruleSearch - 搜索规则（嵌套对象）
+            JSONObject ruleSearch = new JSONObject();
+            putIfNotEmpty(ruleSearch, "bookList", detectSearchList(doc));
+            putIfNotEmpty(ruleSearch, "name", detectSearchName(doc));
+            putIfNotEmpty(ruleSearch, "author", detectSearchAuthor(doc));
+            putIfNotEmpty(ruleSearch, "coverUrl", detectSearchCover(doc));
+            if (ruleSearch.length() > 0) {
+                bookSource.put("ruleSearch", ruleSearch);
+            }
 
-            // 检测书籍信息规则
-            putIfNotEmpty(bookSource, "ruleBookName", detectBookName(doc));
-            putIfNotEmpty(bookSource, "ruleBookAuthor", detectBookAuthor(doc));
-            putIfNotEmpty(bookSource, "ruleCoverUrl", detectCover(doc));
-            putIfNotEmpty(bookSource, "ruleBookKind", detectBookKind(doc));
-            putIfNotEmpty(bookSource, "ruleBookIntroduce", detectIntroduce(doc));
+            // ruleBookInfo - 书籍信息规则（嵌套对象）
+            JSONObject ruleBookInfo = new JSONObject();
+            putIfNotEmpty(ruleBookInfo, "name", detectBookName(doc));
+            putIfNotEmpty(ruleBookInfo, "author", detectBookAuthor(doc));
+            putIfNotEmpty(ruleBookInfo, "coverUrl", detectCover(doc));
+            putIfNotEmpty(ruleBookInfo, "kind", detectBookKind(doc));
+            putIfNotEmpty(ruleBookInfo, "intro", detectIntroduce(doc));
+            if (ruleBookInfo.length() > 0) {
+                bookSource.put("ruleBookInfo", ruleBookInfo);
+            }
 
-            // 检测章节规则
-            putIfNotEmpty(bookSource, "ruleChapterList", detectChapterList(doc));
-            putIfNotEmpty(bookSource, "ruleChapterName", detectChapterName(doc));
-            putIfNotEmpty(bookSource, "ruleChapterUrl", detectChapterUrl(doc));
+            // ruleToc - 目录规则（嵌套对象）
+            JSONObject ruleToc = new JSONObject();
+            putIfNotEmpty(ruleToc, "chapterList", detectChapterList(doc));
+            putIfNotEmpty(ruleToc, "chapterName", detectChapterName(doc));
+            putIfNotEmpty(ruleToc, "chapterUrl", detectChapterUrl(doc));
+            if (ruleToc.length() > 0) {
+                bookSource.put("ruleToc", ruleToc);
+            }
 
-            // 检测内容规则
-            putIfNotEmpty(bookSource, "ruleContent", detectContent(doc));
+            // ruleContent - 内容规则（嵌套对象）
+            JSONObject ruleContent = new JSONObject();
+            putIfNotEmpty(ruleContent, "content", detectContent(doc));
+            if (ruleContent.length() > 0) {
+                bookSource.put("ruleContent", ruleContent);
+            }
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -290,7 +313,6 @@ public class BookSourceAnalyzer {
         // 先检查meta标签
         Element meta = doc.selectFirst("meta[property=og:novel:book_name], meta[property=og:title]");
         if (meta != null) {
-            String selector = meta.tagName() + meta.attributes().toString();
             return "meta[property=\"" + meta.attr("property") + "\"]@content";
         }
 
@@ -404,7 +426,7 @@ public class BookSourceAnalyzer {
     private String detectIntroduce(Document doc) {
         Element meta = doc.selectFirst("meta[property=og:description], meta[name=description]");
         if (meta != null) {
-            return meta.tagName() + "[name=\"" + meta.attr("name") + "\"]@content";
+            return "meta[name=\"" + meta.attr("name") + "\"]@content";
         }
 
         String[] selectors = {

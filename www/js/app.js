@@ -107,6 +107,22 @@ function displayResult(result) {
 }
 
 /**
+ * 从嵌套规则对象中获取值
+ */
+function getRuleValue(bookSource, rulePath) {
+    const parts = rulePath.split('.');
+    let obj = bookSource;
+    for (const part of parts) {
+        if (obj && typeof obj === 'object' && part in obj) {
+            obj = obj[part];
+        } else {
+            return '未检测到';
+        }
+    }
+    return obj || '未检测到';
+}
+
+/**
  * 显示书源预览
  */
 function displayPreview(bookSource) {
@@ -114,17 +130,20 @@ function displayPreview(bookSource) {
     const fields = [
         { label: '书源名称', value: bookSource.bookSourceName },
         { label: '网站URL', value: bookSource.bookSourceUrl },
-        { label: '搜索URL', value: bookSource.ruleSearchUrl || '未检测到' },
-        { label: '搜索列表', value: bookSource.ruleSearchList || '未检测到' },
-        { label: '搜索书名', value: bookSource.ruleSearchName || '未检测到' },
-        { label: '搜索作者', value: bookSource.ruleSearchAuthor || '未检测到' },
-        { label: '搜索封面', value: bookSource.ruleSearchCoverUrl || '未检测到' },
-        { label: '书名规则', value: bookSource.ruleBookName || '未检测到' },
-        { label: '作者规则', value: bookSource.ruleBookAuthor || '未检测到' },
-        { label: '封面规则', value: bookSource.ruleCoverUrl || '未检测到' },
-        { label: '章节列表', value: bookSource.ruleChapterList || '未检测到' },
-        { label: '章节名称', value: bookSource.ruleChapterName || '未检测到' },
-        { label: '内容规则', value: bookSource.ruleContent || '未检测到' }
+        { label: '搜索URL', value: bookSource.searchUrl || '未检测到' },
+        { label: '搜索列表', value: getRuleValue(bookSource, 'ruleSearch.bookList') },
+        { label: '搜索书名', value: getRuleValue(bookSource, 'ruleSearch.name') },
+        { label: '搜索作者', value: getRuleValue(bookSource, 'ruleSearch.author') },
+        { label: '搜索封面', value: getRuleValue(bookSource, 'ruleSearch.coverUrl') },
+        { label: '书名规则', value: getRuleValue(bookSource, 'ruleBookInfo.name') },
+        { label: '作者规则', value: getRuleValue(bookSource, 'ruleBookInfo.author') },
+        { label: '封面规则', value: getRuleValue(bookSource, 'ruleBookInfo.coverUrl') },
+        { label: '分类规则', value: getRuleValue(bookSource, 'ruleBookInfo.kind') },
+        { label: '简介规则', value: getRuleValue(bookSource, 'ruleBookInfo.intro') },
+        { label: '章节列表', value: getRuleValue(bookSource, 'ruleToc.chapterList') },
+        { label: '章节名称', value: getRuleValue(bookSource, 'ruleToc.chapterName') },
+        { label: '章节URL', value: getRuleValue(bookSource, 'ruleToc.chapterUrl') },
+        { label: '内容规则', value: getRuleValue(bookSource, 'ruleContent.content') }
     ];
 
     preview.innerHTML = fields.map(field => `
@@ -136,28 +155,66 @@ function displayPreview(bookSource) {
 }
 
 /**
+ * 从嵌套对象中获取值
+ */
+function getNestedValue(obj, path) {
+    const parts = path.split('.');
+    let current = obj;
+    for (const part of parts) {
+        if (current && typeof current === 'object' && part in current) {
+            current = current[part];
+        } else {
+            return '';
+        }
+    }
+    return typeof current === 'string' ? current : '';
+}
+
+/**
+ * 设置嵌套对象的值
+ */
+function setNestedValue(obj, path, value) {
+    const parts = path.split('.');
+    let current = obj;
+    for (let i = 0; i < parts.length - 1; i++) {
+        if (!current[parts[i]] || typeof current[parts[i]] !== 'object') {
+            current[parts[i]] = {};
+        }
+        current = current[parts[i]];
+    }
+    if (value) {
+        current[parts[parts.length - 1]] = value;
+    } else {
+        delete current[parts[parts.length - 1]];
+    }
+}
+
+/**
  * 显示规则编辑器
  */
 function displayRuleEditor(bookSource) {
     const editor = document.getElementById('ruleEditor');
     const editableRules = [
-        { key: 'ruleSearchUrl', label: '搜索URL', value: bookSource.ruleSearchUrl || '' },
-        { key: 'ruleSearchList', label: '搜索列表选择器', value: bookSource.ruleSearchList || '' },
-        { key: 'ruleSearchName', label: '搜索书名选择器', value: bookSource.ruleSearchName || '' },
-        { key: 'ruleSearchAuthor', label: '搜索作者选择器', value: bookSource.ruleSearchAuthor || '' },
-        { key: 'ruleSearchCoverUrl', label: '搜索封面选择器', value: bookSource.ruleSearchCoverUrl || '' },
-        { key: 'ruleBookName', label: '书名选择器', value: bookSource.ruleBookName || '' },
-        { key: 'ruleBookAuthor', label: '作者选择器', value: bookSource.ruleBookAuthor || '' },
-        { key: 'ruleCoverUrl', label: '封面选择器', value: bookSource.ruleCoverUrl || '' },
-        { key: 'ruleChapterList', label: '章节列表选择器', value: bookSource.ruleChapterList || '' },
-        { key: 'ruleChapterName', label: '章节名称选择器', value: bookSource.ruleChapterName || '' },
-        { key: 'ruleContent', label: '内容选择器', value: bookSource.ruleContent || '' }
+        { key: 'searchUrl', label: '搜索URL', value: bookSource.searchUrl || '' },
+        { key: 'ruleSearch.bookList', label: '搜索列表选择器', value: getNestedValue(bookSource, 'ruleSearch.bookList') },
+        { key: 'ruleSearch.name', label: '搜索书名选择器', value: getNestedValue(bookSource, 'ruleSearch.name') },
+        { key: 'ruleSearch.author', label: '搜索作者选择器', value: getNestedValue(bookSource, 'ruleSearch.author') },
+        { key: 'ruleSearch.coverUrl', label: '搜索封面选择器', value: getNestedValue(bookSource, 'ruleSearch.coverUrl') },
+        { key: 'ruleBookInfo.name', label: '书名选择器', value: getNestedValue(bookSource, 'ruleBookInfo.name') },
+        { key: 'ruleBookInfo.author', label: '作者选择器', value: getNestedValue(bookSource, 'ruleBookInfo.author') },
+        { key: 'ruleBookInfo.coverUrl', label: '封面选择器', value: getNestedValue(bookSource, 'ruleBookInfo.coverUrl') },
+        { key: 'ruleBookInfo.kind', label: '分类选择器', value: getNestedValue(bookSource, 'ruleBookInfo.kind') },
+        { key: 'ruleBookInfo.intro', label: '简介选择器', value: getNestedValue(bookSource, 'ruleBookInfo.intro') },
+        { key: 'ruleToc.chapterList', label: '章节列表选择器', value: getNestedValue(bookSource, 'ruleToc.chapterList') },
+        { key: 'ruleToc.chapterName', label: '章节名称选择器', value: getNestedValue(bookSource, 'ruleToc.chapterName') },
+        { key: 'ruleToc.chapterUrl', label: '章节URL选择器', value: getNestedValue(bookSource, 'ruleToc.chapterUrl') },
+        { key: 'ruleContent.content', label: '内容选择器', value: getNestedValue(bookSource, 'ruleContent.content') }
     ];
 
     editor.innerHTML = editableRules.map(rule => `
         <div class="rule-field">
-            <label for="rule_${rule.key}">${rule.label}</label>
-            <input type="text" id="rule_${rule.key}" value="${escapeHtml(rule.value)}" 
+            <label for="rule_${rule.key.replace(/\./g, '_')}">${rule.label}</label>
+            <input type="text" id="rule_${rule.key.replace(/\./g, '_')}" value="${escapeHtml(rule.value)}" 
                    placeholder="输入CSS选择器或URL规则" />
         </div>
     `).join('');
@@ -171,20 +228,18 @@ function regenerateFromRules() {
 
     const bookSource = currentResult.bookSource;
     const editableRules = [
-        'ruleSearchUrl', 'ruleSearchList', 'ruleSearchName', 'ruleSearchAuthor',
-        'ruleSearchCoverUrl', 'ruleBookName', 'ruleBookAuthor', 'ruleCoverUrl',
-        'ruleChapterList', 'ruleChapterName', 'ruleContent'
+        'searchUrl',
+        'ruleSearch.bookList', 'ruleSearch.name', 'ruleSearch.author', 'ruleSearch.coverUrl',
+        'ruleBookInfo.name', 'ruleBookInfo.author', 'ruleBookInfo.coverUrl', 'ruleBookInfo.kind', 'ruleBookInfo.intro',
+        'ruleToc.chapterList', 'ruleToc.chapterName', 'ruleToc.chapterUrl',
+        'ruleContent.content'
     ];
 
     editableRules.forEach(key => {
-        const input = document.getElementById(`rule_${key}`);
+        const input = document.getElementById(`rule_${key.replace(/\./g, '_')}`);
         if (input) {
             const value = input.value.trim();
-            if (value) {
-                bookSource[key] = value;
-            } else {
-                delete bookSource[key];
-            }
+            setNestedValue(bookSource, key, value);
         }
     });
 
