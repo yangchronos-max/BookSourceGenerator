@@ -39,6 +39,12 @@ header h1 {
     font-size: 14px;
 }
 
+.subtitle-hint {
+    color: #e67e22;
+    font-size: 12px;
+    margin-top: 4px;
+}
+
 .input-section {
     margin-bottom: 30px;
 }
