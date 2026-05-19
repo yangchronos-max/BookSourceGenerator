@@ -146,7 +146,10 @@ class BookSourceAnalyzer {
                     }
                     
                     if (method === 'post') {
-                        // POST请求：使用阅读App的api数组语法
+                        // POST请求：使用阅读App的POST搜索格式
+                        // 格式：URL,{'method':'POST','body':'key={{key}}'}
+                        // 注意：必须使用单引号，阅读App只识别单引号格式
+                        
                         // 收集所有表单字段
                         let bodyParts = [];
                         const allInputs = form.querySelectorAll('input[name]');
@@ -163,8 +166,8 @@ class BookSourceAnalyzer {
                         }
                         const body = bodyParts.join('&');
                         
-                        // 阅读App POST搜索格式：URL,{"body":"key={{key}}","method":"POST"}
-                        result.url = searchUrl + ',{"body":"' + body + '","method":"POST"}';
+                        // 阅读App POST搜索格式（必须用单引号）
+                        result.url = searchUrl + ",{'method':'POST','body':'" + body + "'}";
                         result.hasForm = true;
                         result.inputName = name;
                         result.isPost = true;
