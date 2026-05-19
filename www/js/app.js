@@ -4,14 +4,16 @@
  * 
  * 搜索URL捕获流程（半自动化）：
  * 1. 用户输入网站URL → 点击"开始分析"
- * 2. 自动检测搜索URL，如果失败则进入手动捕获模式
+ * 2. 分析完成后，优先显示手动捕获界面（自动检测的搜索URL作为备选）
  * 3. 手动捕获：点击按钮打开网站 + 自动复制搜索词到剪贴板
  * 4. 用户在网站上搜索后，把结果URL粘贴回来
  * 5. 自动解析出搜索格式
+ * 6. 如果用户不想手动捕获，可以一键跳过使用自动检测的URL
  */
 let currentResult = null;
 let lastExportedFileName = null;
 let capturedSearchUrl = null; // 用户手动捕获的搜索URL
+let autoDetectedSearchUrl = null; // 自动检测的搜索URL（备选）
 
 // 预设搜索词（用户可修改，Android原生可覆盖）
 const DEFAULT_SEARCH_KEYWORD = (window.Android && window.Android.getSearchKeyword) 
@@ -53,7 +55,7 @@ async function startAnalysis() {
         progressFill.style.width = '20%';
         await sleep(200);
 
-        // 步骤2: 调用原生分析引擎
+        // 步骤2: 调用分析引擎
         loadingText.textContent = '正在获取网页内容...';
         progressFill.style.width = '40%';
         
@@ -75,23 +77,14 @@ async function startAnalysis() {
         
         currentResult = result;
 
-        // 步骤3: 检查搜索URL是否有效
+        // 步骤3: 保存自动检测的搜索URL（作为备选）
         loadingText.textContent = '正在检测搜索功能...';
         progressFill.style.width = '60%';
         await sleep(200);
 
-        const searchUrl = result.bookSource.searchUrl || '';
-        const hasValidSearchUrl = searchUrl && searchUrl.includes('{{key}}');
-
-        if (!hasValidSearchUrl) {
-            // 自动检测失败，进入手动捕获模式
-            loadingSection.classList.add('hidden');
-            showSearchCaptureSection(url);
-            analyzeBtn.disabled = false;
-            return;
-        }
-
-        // 步骤4: 生成书源
+        autoDetectedSearchUrl = result.bookSource.searchUrl || '';
+        
+        // 步骤4: 分析网站结构
         loadingText.textContent = '正在分析网站结构...';
         progressFill.style.width = '70%';
         await sleep(300);
@@ -100,15 +93,14 @@ async function startAnalysis() {
         progressFill.style.width = '85%';
         await sleep(200);
 
-        // 步骤5: 完成
+        // 步骤5: 完成分析，优先显示手动捕获界面
         loadingText.textContent = '✅ 分析完成！';
         progressFill.style.width = '100%';
         await sleep(400);
 
-        // 显示结果
+        // 隐藏加载，显示手动捕获界面
         loadingSection.classList.add('hidden');
-        displayResult(result);
-        resultSection.classList.remove('hidden');
+        showSearchCaptureSection(url);
 
     } catch (error) {
         loadingSection.classList.add('hidden');
@@ -120,6 +112,7 @@ async function startAnalysis() {
 
 /**
  * 显示搜索URL捕获界面
+ * 优先让用户手动捕获，不愿意的可以跳过用自动检测的
  */
 function showSearchCaptureSection(siteUrl) {
     const section = document.getElementById('searchCaptureSection');
@@ -144,9 +137,20 @@ function showSearchCaptureSection(siteUrl) {
     
     // 启用打开网站按钮
     document.getElementById('openSiteBtn').disabled = false;
+    document.getElementById('openSiteBtn').textContent = '🌐 打开网站并复制搜索词';
     
     // 保存网站URL供后续使用
     document.getElementById('openSiteBtn').dataset.siteUrl = siteUrl;
+    
+    // 更新跳过按钮文案，显示自动检测的URL
+    const skipBtn = document.querySelector('.btn-skip-capture');
+    if (autoDetectedSearchUrl && autoDetectedSearchUrl.includes('{{key}}')) {
+        skipBtn.textContent = '⏭ 跳过，使用自动检测的搜索URL';
+        skipBtn.style.display = 'block';
+    } else {
+        skipBtn.textContent = '⏭ 跳过，稍后手动设置搜索URL';
+        skipBtn.style.display = 'block';
+    }
     
     // 自动复制搜索词到剪贴板
     copySearchKeyword();
@@ -174,7 +178,7 @@ function openSiteForSearch() {
     copySearchKeyword();
     
     if (window.Android && window.Android.openUrl) {
-        // Android原生：打开WebView
+        // Android原生：打开系统浏览器
         window.Android.openUrl(siteUrl);
         showToast('🌐 已打开网站，请粘贴搜索词进行搜索');
     } else {
@@ -301,6 +305,8 @@ function parseSearchUrl() {
             </div>
         `;
         resultDiv.classList.remove('hidden');
+        resultDiv.style.background = '#e8f5e9';
+        resultDiv.style.color = '#2e7d32';
         
         // 标记步骤4完成
         document.getElementById('step4').classList.remove('active');
@@ -360,11 +366,20 @@ function continueWithCapturedUrl() {
 
 /**
  * 跳过搜索URL捕获，使用自动检测的URL
+ * 用户不想手动捕获时，一键使用自动检测的搜索URL
  */
 function skipSearchCapture() {
     if (!currentResult) {
         showToast('⚠️ 请先分析网站');
         return;
+    }
+    
+    // 使用自动检测的搜索URL
+    if (autoDetectedSearchUrl && autoDetectedSearchUrl.includes('{{key}}')) {
+        currentResult.bookSource.searchUrl = autoDetectedSearchUrl;
+        showToast('ℹ️ 已使用自动检测的搜索URL');
+    } else {
+        showToast('ℹ️ 未检测到搜索URL，请在规则编辑器中手动填写');
     }
     
     // 隐藏搜索捕获界面
@@ -373,8 +388,6 @@ function skipSearchCapture() {
     // 显示结果
     displayResult(currentResult);
     document.getElementById('resultSection').classList.remove('hidden');
-    
-    showToast('ℹ️ 已使用自动检测的搜索URL');
 }
 
 /**
@@ -662,6 +675,7 @@ function resetUI() {
     
     // 重置搜索捕获状态
     capturedSearchUrl = null;
+    autoDetectedSearchUrl = null;
     const parseBtn = document.getElementById('parseSearchUrlBtn');
     parseBtn.disabled = true;
     parseBtn.textContent = '🔄 解析搜索URL';
