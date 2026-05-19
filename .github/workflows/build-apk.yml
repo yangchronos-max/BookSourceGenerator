@@ -23,8 +23,8 @@ jobs:
       uses: android-actions/setup-android@v3
 
     - name: Grant execute permission for gradlew
-      run: chmod +x android/gradlew
-      working-directory: ${{ github.workspace }}
+      run: chmod +x gradlew
+      working-directory: ${{ github.workspace }}/android
 
     - name: Build with Gradle
       run: ./gradlew assembleDebug
