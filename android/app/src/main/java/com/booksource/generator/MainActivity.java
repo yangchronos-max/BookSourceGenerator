@@ -233,6 +233,21 @@ public class MainActivity extends AppCompatActivity {
         }
 
         @JavascriptInterface
+        public String analyzeUrl(String url, String siteName) {
+            try {
+                BookSourceAnalyzer analyzer = new BookSourceAnalyzer();
+                JSONObject result = analyzer.analyze(url, siteName);
+                return result.toString();
+            } catch (Exception e) {
+                JSONObject error = new JSONObject();
+                try {
+                    error.put("error", e.getMessage());
+                } catch (Exception ignored) {}
+                return error.toString();
+            }
+        }
+
+        @JavascriptInterface
         public String getAppVersion() {
             return "1.0.0";
         }

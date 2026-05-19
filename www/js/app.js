@@ -1,12 +1,12 @@
 /**
  * 书源生成器 - 主应用逻辑
+ * 分析引擎由Android原生Java实现（Jsoup），前端只负责UI
  */
-let analyzer = null;
 let currentResult = null;
 let lastExportedFileName = null;
 
 /**
- * 开始分析
+ * 开始分析 - 调用Android原生分析引擎
  */
 async function startAnalysis() {
     const urlInput = document.getElementById('siteUrl');
@@ -36,34 +36,43 @@ async function startAnalysis() {
         // 步骤1: 验证URL
         loadingText.textContent = '正在验证URL...';
         progressFill.style.width = '20%';
-        await sleep(300);
+        await sleep(200);
 
-        // 步骤2: 初始化分析器
-        loadingText.textContent = '正在初始化分析引擎...';
-        progressFill.style.width = '30%';
-        analyzer = new BookSourceAnalyzer();
-        await sleep(300);
-
-        // 步骤3: 获取并分析网页
+        // 步骤2: 调用原生分析引擎
         loadingText.textContent = '正在获取网页内容...';
-        progressFill.style.width = '50%';
+        progressFill.style.width = '40%';
         
-        const result = await analyzer.analyze(url, siteName);
+        let result;
+        if (window.Android && window.Android.analyzeUrl) {
+            // Android原生分析（Jsoup，无CORS限制）
+            const jsonStr = window.Android.analyzeUrl(url, siteName);
+            const parsed = JSON.parse(jsonStr);
+            if (parsed.error) {
+                throw new Error(parsed.error);
+            }
+            result = parsed;
+        } else {
+            // 浏览器环境：使用前端分析引擎
+            loadingText.textContent = '正在初始化分析引擎...';
+            const analyzer = new BookSourceAnalyzer();
+            result = await analyzer.analyze(url, siteName);
+        }
+        
         currentResult = result;
 
-        // 步骤4: 生成书源
+        // 步骤3: 生成书源
         loadingText.textContent = '正在分析网站结构...';
         progressFill.style.width = '70%';
-        await sleep(500);
+        await sleep(300);
 
         loadingText.textContent = '正在生成书源规则...';
         progressFill.style.width = '85%';
-        await sleep(300);
+        await sleep(200);
 
-        // 步骤5: 完成
+        // 步骤4: 完成
         loadingText.textContent = '✅ 分析完成！';
         progressFill.style.width = '100%';
-        await sleep(500);
+        await sleep(400);
 
         // 显示结果
         loadingSection.classList.add('hidden');
@@ -190,7 +199,6 @@ function regenerateFromRules() {
 async function copyResult() {
     const jsonText = document.getElementById('resultJson').textContent;
     try {
-        // 尝试使用Android原生接口
         if (window.Android && window.Android.copyToClipboard) {
             window.Android.copyToClipboard(jsonText);
             showToast('📋 已复制到剪贴板！');
@@ -219,12 +227,10 @@ function exportJson() {
     const jsonStr = JSON.stringify([currentResult.bookSource], null, 2);
     const fileName = `${currentResult.bookSource.bookSourceName || 'book-source'}.json`;
     
-    // 使用Android原生接口保存
     if (window.Android && window.Android.saveJsonFile) {
         const result = window.Android.saveJsonFile(fileName, jsonStr);
         lastExportedFileName = fileName;
         
-        // 显示真实文件路径
         const filePathHint = document.getElementById('filePathHint');
         const downloadPath = window.Android.getDownloadPath ? window.Android.getDownloadPath() : '下载文件夹';
         filePathHint.innerHTML = `
@@ -236,7 +242,6 @@ function exportJson() {
         
         showToast(`💾 已保存到 ${downloadPath}`);
     } else {
-        // 浏览器备用方案
         const blob = new Blob([jsonStr], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -246,7 +251,6 @@ function exportJson() {
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        
         showToast(`💾 已导出 ${fileName}`);
     }
 }
@@ -260,14 +264,12 @@ function importToReader() {
     // 阅读App需要数组格式 [{...}]
     const jsonStr = JSON.stringify([currentResult.bookSource], null, 2);
     
-    // 使用Android原生接口
     if (window.Android && window.Android.openReaderApp) {
         window.Android.openReaderApp(jsonStr);
         showToast('📲 正在打开阅读App...');
         return;
     }
     
-    // 使用legado协议直接导入书源
     try {
         const encoded = encodeURIComponent(jsonStr);
         const legadoUrl = `legado://import/bookSource?src=${encoded}`;
@@ -302,7 +304,6 @@ function resetUI() {
  * 显示Toast提示
  */
 function showToast(message) {
-    // 优先使用Android原生Toast
     if (window.Android && window.Android.showToast) {
         window.Android.showToast(message);
         return;
