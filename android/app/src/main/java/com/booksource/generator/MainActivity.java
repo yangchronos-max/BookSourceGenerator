@@ -260,5 +260,23 @@ public class MainActivity extends AppCompatActivity {
                 Environment.DIRECTORY_DOWNLOADS);
             return downloadsDir.getAbsolutePath();
         }
+
+        @JavascriptInterface
+        public void openUrl(String url) {
+            runOnUiThread(() -> {
+                try {
+                    Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(intent);
+                } catch (Exception e) {
+                    showToast("无法打开浏览器: " + e.getMessage());
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public String getSearchKeyword() {
+            return "凡人修仙";
+        }
     }
 }

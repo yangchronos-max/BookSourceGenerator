@@ -56,6 +56,231 @@
             border-radius: 6px;
             word-break: break-all;
         }
+        /* ===== 搜索URL捕获界面 ===== */
+        .search-capture-section {
+            margin-top: 20px;
+            padding: 16px;
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        .search-capture-section h3 {
+            margin: 0 0 12px 0;
+            font-size: 16px;
+            color: #333;
+        }
+        .search-capture-section .step-list {
+            margin: 0 0 16px 0;
+            padding: 0;
+            list-style: none;
+        }
+        .search-capture-section .step-list li {
+            position: relative;
+            padding: 10px 12px 10px 36px;
+            margin-bottom: 8px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            font-size: 14px;
+            line-height: 1.5;
+            color: #555;
+        }
+        .search-capture-section .step-list li .step-num {
+            position: absolute;
+            left: 10px;
+            top: 10px;
+            width: 20px;
+            height: 20px;
+            background: #667eea;
+            color: #fff;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 20px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .search-capture-section .step-list li.done {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+        .search-capture-section .step-list li.done .step-num {
+            background: #43a047;
+        }
+        .search-capture-section .step-list li.active {
+            background: #e3f2fd;
+            color: #1565c0;
+            border: 2px solid #42a5f5;
+        }
+        .search-capture-section .step-list li.active .step-num {
+            background: #1e88e5;
+        }
+        .search-capture-section .step-list li .step-hint {
+            font-size: 12px;
+            color: #888;
+            margin-top: 4px;
+        }
+        .search-capture-section .step-list li .step-hint code {
+            background: #e0e0e0;
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-size: 12px;
+        }
+        .search-capture-section .btn-open-site {
+            display: block;
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-bottom: 12px;
+        }
+        .search-capture-section .btn-open-site:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+        }
+        .search-capture-section .btn-open-site:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .search-capture-section .search-url-input-group {
+            margin-top: 12px;
+        }
+        .search-capture-section .search-url-input-group label {
+            display: block;
+            font-size: 13px;
+            color: #666;
+            margin-bottom: 6px;
+        }
+        .search-capture-section .search-url-input-group textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 14px;
+            font-family: monospace;
+            resize: vertical;
+            min-height: 60px;
+            transition: border-color 0.3s;
+            box-sizing: border-box;
+        }
+        .search-capture-section .search-url-input-group textarea:focus {
+            border-color: #667eea;
+            outline: none;
+        }
+        .search-capture-section .search-url-input-group textarea.has-value {
+            border-color: #43a047;
+            background: #f1f8e9;
+        }
+        .search-capture-section .btn-parse-url {
+            display: block;
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, #43a047, #66bb6a);
+            color: #fff;
+            border: none;
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-top: 12px;
+        }
+        .search-capture-section .btn-parse-url:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(67, 160, 71, 0.4);
+        }
+        .search-capture-section .btn-parse-url:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .search-capture-section .parsed-result {
+            margin-top: 12px;
+            padding: 12px;
+            background: #e8f5e9;
+            border-radius: 8px;
+            font-size: 13px;
+            color: #2e7d32;
+        }
+        .search-capture-section .parsed-result code {
+            display: block;
+            padding: 8px;
+            margin-top: 6px;
+            background: #fff;
+            border-radius: 4px;
+            font-size: 13px;
+            word-break: break-all;
+        }
+        .search-capture-section .parsed-result .method-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+            margin-right: 6px;
+        }
+        .search-capture-section .parsed-result .method-badge.get {
+            background: #bbdefb;
+            color: #1565c0;
+        }
+        .search-capture-section .parsed-result .method-badge.post {
+            background: #ffe0b2;
+            color: #e65100;
+        }
+        /* 搜索URL输入框的提示 */
+        .search-url-hint {
+            font-size: 12px;
+            color: #999;
+            margin-top: 4px;
+            line-height: 1.4;
+        }
+        .search-url-hint strong {
+            color: #667eea;
+        }
+        /* 复制按钮 */
+        .btn-copy-keyword {
+            display: inline-block;
+            padding: 6px 12px;
+            background: #e3f2fd;
+            color: #1565c0;
+            border: 1px solid #90caf9;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-left: 6px;
+        }
+        .btn-copy-keyword:hover {
+            background: #bbdefb;
+        }
+        .btn-copy-keyword.copied {
+            background: #c8e6c9;
+            border-color: #66bb6a;
+            color: #2e7d32;
+        }
+        /* 跳过按钮 */
+        .btn-skip-capture {
+            display: block;
+            width: 100%;
+            padding: 10px;
+            background: transparent;
+            color: #999;
+            border: 1px dashed #ccc;
+            border-radius: 8px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 8px;
+        }
+        .btn-skip-capture:hover {
+            color: #667eea;
+            border-color: #667eea;
+        }
     </style>
 </head>
 <body>
@@ -87,6 +312,63 @@
             <div class="progress-bar">
                 <div id="progressFill" class="progress-fill"></div>
             </div>
+        </div>
+
+        <!-- ===== 搜索URL捕获界面 ===== -->
+        <div id="searchCaptureSection" class="search-capture-section hidden">
+            <h3>🔎 捕获搜索URL</h3>
+            <p style="font-size:13px;color:#666;margin:0 0 12px 0;">
+                自动检测搜索URL失败，请按照以下步骤手动捕获：
+            </p>
+            <ol class="step-list" id="captureStepList">
+                <li id="step1">
+                    <span class="step-num">1</span>
+                    点击下方按钮打开网站
+                    <div class="step-hint">App会自动打开网站，并复制搜索词到剪贴板</div>
+                </li>
+                <li id="step2">
+                    <span class="step-num">2</span>
+                    在网站上搜索
+                    <div class="step-hint">在搜索框粘贴搜索词（已复制到剪贴板），点击搜索按钮</div>
+                </li>
+                <li id="step3">
+                    <span class="step-num">3</span>
+                    复制搜索结果URL
+                    <div class="step-hint">从浏览器地址栏复制搜索结果页的完整URL</div>
+                </li>
+                <li id="step4">
+                    <span class="step-num">4</span>
+                    粘贴URL到下方输入框
+                    <div class="step-hint">粘贴后自动解析搜索格式</div>
+                </li>
+            </ol>
+
+            <button id="openSiteBtn" class="btn-open-site" onclick="openSiteForSearch()">
+                🌐 打开网站并复制搜索词
+            </button>
+
+            <div class="search-url-input-group">
+                <label for="searchResultUrl">
+                    📋 粘贴搜索结果URL
+                    <button id="copyKeywordBtn" class="btn-copy-keyword" onclick="copySearchKeyword()">
+                        📝 复制搜索词
+                    </button>
+                </label>
+                <textarea id="searchResultUrl" rows="2" placeholder="例如: https://www.example.com/search?keyword=凡人修仙" oninput="onSearchUrlInput(this)"></textarea>
+                <div class="search-url-hint">
+                    💡 提示：在浏览器地址栏复制搜索结果页的完整URL粘贴到这里
+                </div>
+            </div>
+
+            <div id="parsedSearchResult" class="parsed-result hidden"></div>
+
+            <button id="parseSearchUrlBtn" class="btn-parse-url" onclick="parseSearchUrl()" disabled>
+                🔄 解析搜索URL
+            </button>
+
+            <button class="btn-skip-capture" onclick="skipSearchCapture()">
+                跳过，使用自动检测的搜索URL
+            </button>
         </div>
 
         <div id="resultSection" class="result-section hidden">

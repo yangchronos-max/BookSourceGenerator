@@ -3,7 +3,13 @@
  * 
  * 参考项目：
  * - https://github.com/xy9144/auto_source_generator (Python版)
+ * - https://github.com/z1131392774/legado-source-generator (浏览器插件版)
  * - 阅读App官方讨论: https://github.com/gedoor/legado/discussions/5765
+ * 
+ * 核心策略（来自legado-source-generator的search-capture.js）：
+ * 1. 用户手动在网站上搜索一次
+ * 2. 把浏览器地址栏的搜索结果URL粘贴过来
+ * 3. 自动解析出搜索格式（替换关键词为{{key}}）
  * 
  * 输出格式兼容阅读App v3.x 标准格式：
  * {
@@ -30,6 +36,110 @@ class BookSourceAnalyzer {
         this.proxyUrl = 'https://api.allorigins.win/raw?url=';
         this.proxyUrl2 = 'https://corsproxy.io/?';
         this.proxyUrl3 = 'https://api.codetabs.com/v1/proxy?quest=';
+    }
+
+    /**
+     * 从搜索结果URL中解析搜索格式
+     * 这是核心功能！用户手动搜索一次，把结果URL粘贴过来，我们自动解析
+     * 
+     * 参考 legado-source-generator 的 search-capture.js:
+     * - replaceKeywordInCapturedUrl(): 从URL中替换关键词为{{key}}
+     * - replaceKeywordInCapturedBody(): 从POST body中替换关键词为{{key}}
+     * - containsKnownKeywordToken(): 检测是否包含关键词
+     * 
+     * @param {string} searchUrl - 用户粘贴的搜索结果URL
+     * @param {string} keyword - 用户搜索的关键词（默认"凡人修仙"）
+     * @returns {object} { url: "解析后的搜索URL", method: "GET|POST", body: "POST body", charset: "编码" }
+     */
+    parseSearchUrl(searchUrl, keyword = '凡人修仙') {
+        if (!searchUrl) return null;
+        
+        // 对关键词进行URL编码（参考 legado-source-generator 的 encodeURIComponent）
+        const encodedKeyword = encodeURIComponent(keyword);
+        
+        let result = {
+            url: searchUrl,
+            method: 'GET',
+            body: '',
+            charset: 'utf-8'
+        };
+        
+        // 检查是否是POST格式（URL中包含逗号和JSON配置）
+        // 格式: URL,{'method':'POST','body':'key={{key}}'}
+        // 或: URL,{"method":"POST","body":"key={{key}}"}
+        const postMatch = searchUrl.match(/^(.+?),\s*['"]?\{.*['"]?$/);
+        if (postMatch) {
+            // 已经是POST格式，直接返回
+            result.url = searchUrl;
+            result.method = 'POST';
+            return result;
+        }
+        
+        // 检查URL中是否包含编码后的关键词（参考 legado-source-generator 的 containsKnownKeywordToken）
+        const hasEncodedKeyword = searchUrl.includes(encodedKeyword);
+        const hasRawKeyword = searchUrl.includes(keyword);
+        
+        if (hasEncodedKeyword || hasRawKeyword) {
+            // 替换关键词为{{key}}（参考 legado-source-generator 的 replaceKeywordInCapturedUrl）
+            let url = searchUrl;
+            
+            // 先替换编码后的关键词
+            if (hasEncodedKeyword) {
+                url = url.replaceAll(encodedKeyword, '{{key}}');
+            }
+            // 再替换原始关键词（如果有）
+            if (hasRawKeyword) {
+                url = url.replaceAll(keyword, '{{key}}');
+            }
+            
+            result.url = url;
+            result.method = 'GET';
+            return result;
+        }
+        
+        // 检查是否是POST请求的URL（没有关键词在URL中，说明可能是POST）
+        // 这种情况用户需要提供POST body
+        // 我们尝试从URL中提取可能的参数名
+        try {
+            const urlObj = new URL(searchUrl);
+            const params = new URLSearchParams(urlObj.search);
+            
+            // 查找可能的搜索参数名（参考 legado-source-generator 的 preferred参数名列表）
+            const preferredParams = ['q', 'query', 'wd', 'word', 'key', 'kw', 'keyword', 'search', 'searchkey', 'searchword', 'keyboard', 's', 'so', 'book', 'novel'];
+            
+            for (const param of preferredParams) {
+                if (params.has(param)) {
+                    const value = params.get(param);
+                    // 如果参数值看起来像搜索词（不是数字、不是URL）
+                    if (value && !/^\d+$/.test(value) && !value.startsWith('http')) {
+                        urlObj.searchParams.set(param, '{{key}}');
+                        result.url = urlObj.toString();
+                        result.method = 'GET';
+                        return result;
+                    }
+                }
+            }
+            
+            // 如果以上都不匹配，尝试查找任何非数字、非URL的参数值
+            for (const [key, value] of params) {
+                if (value && !/^\d+$/.test(value) && !value.startsWith('http') && value.length > 0 && value.length < 50) {
+                    urlObj.searchParams.set(key, '{{key}}');
+                    result.url = urlObj.toString();
+                    result.method = 'GET';
+                    return result;
+                }
+            }
+        } catch (e) {
+            // URL解析失败，可能是非标准URL
+        }
+        
+        // 如果URL中没有参数，可能是POST请求
+        // 返回原始URL，让用户手动配置
+        result.url = searchUrl;
+        result.method = 'POST';
+        result.body = 'key={{key}}';
+        
+        return result;
     }
 
     /**

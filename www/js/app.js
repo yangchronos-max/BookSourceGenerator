@@ -1,9 +1,22 @@
 /**
  * 书源生成器 - 主应用逻辑
  * 分析引擎由Android原生Java实现（Jsoup），前端只负责UI
+ * 
+ * 搜索URL捕获流程（半自动化）：
+ * 1. 用户输入网站URL → 点击"开始分析"
+ * 2. 自动检测搜索URL，如果失败则进入手动捕获模式
+ * 3. 手动捕获：点击按钮打开网站 + 自动复制搜索词到剪贴板
+ * 4. 用户在网站上搜索后，把结果URL粘贴回来
+ * 5. 自动解析出搜索格式
  */
 let currentResult = null;
 let lastExportedFileName = null;
+let capturedSearchUrl = null; // 用户手动捕获的搜索URL
+
+// 预设搜索词（用户可修改，Android原生可覆盖）
+const DEFAULT_SEARCH_KEYWORD = (window.Android && window.Android.getSearchKeyword) 
+    ? window.Android.getSearchKeyword() 
+    : '凡人修仙';
 
 /**
  * 开始分析 - 调用Android原生分析引擎
@@ -15,6 +28,7 @@ async function startAnalysis() {
     const loadingSection = document.getElementById('loadingSection');
     const resultSection = document.getElementById('resultSection');
     const errorSection = document.getElementById('errorSection');
+    const searchCaptureSection = document.getElementById('searchCaptureSection');
     const loadingText = document.getElementById('loadingText');
     const progressFill = document.getElementById('progressFill');
     const filePathHint = document.getElementById('filePathHint');
@@ -22,6 +36,7 @@ async function startAnalysis() {
     // 隐藏之前的结果和错误
     resultSection.classList.add('hidden');
     errorSection.classList.add('hidden');
+    searchCaptureSection.classList.add('hidden');
     filePathHint.classList.add('hidden');
     
     // 显示加载状态
@@ -60,7 +75,23 @@ async function startAnalysis() {
         
         currentResult = result;
 
-        // 步骤3: 生成书源
+        // 步骤3: 检查搜索URL是否有效
+        loadingText.textContent = '正在检测搜索功能...';
+        progressFill.style.width = '60%';
+        await sleep(200);
+
+        const searchUrl = result.bookSource.searchUrl || '';
+        const hasValidSearchUrl = searchUrl && searchUrl.includes('{{key}}');
+
+        if (!hasValidSearchUrl) {
+            // 自动检测失败，进入手动捕获模式
+            loadingSection.classList.add('hidden');
+            showSearchCaptureSection(url);
+            analyzeBtn.disabled = false;
+            return;
+        }
+
+        // 步骤4: 生成书源
         loadingText.textContent = '正在分析网站结构...';
         progressFill.style.width = '70%';
         await sleep(300);
@@ -69,7 +100,7 @@ async function startAnalysis() {
         progressFill.style.width = '85%';
         await sleep(200);
 
-        // 步骤4: 完成
+        // 步骤5: 完成
         loadingText.textContent = '✅ 分析完成！';
         progressFill.style.width = '100%';
         await sleep(400);
@@ -85,6 +116,265 @@ async function startAnalysis() {
     } finally {
         analyzeBtn.disabled = false;
     }
+}
+
+/**
+ * 显示搜索URL捕获界面
+ */
+function showSearchCaptureSection(siteUrl) {
+    const section = document.getElementById('searchCaptureSection');
+    section.classList.remove('hidden');
+    
+    // 重置步骤状态
+    document.querySelectorAll('#captureStepList li').forEach(li => {
+        li.classList.remove('done', 'active');
+    });
+    document.getElementById('step1').classList.add('active');
+    
+    // 重置输入
+    const urlInput = document.getElementById('searchResultUrl');
+    urlInput.value = '';
+    urlInput.classList.remove('has-value');
+    
+    // 隐藏解析结果
+    document.getElementById('parsedSearchResult').classList.add('hidden');
+    
+    // 禁用解析按钮
+    document.getElementById('parseSearchUrlBtn').disabled = true;
+    
+    // 启用打开网站按钮
+    document.getElementById('openSiteBtn').disabled = false;
+    
+    // 保存网站URL供后续使用
+    document.getElementById('openSiteBtn').dataset.siteUrl = siteUrl;
+    
+    // 自动复制搜索词到剪贴板
+    copySearchKeyword();
+}
+
+/**
+ * 打开网站并复制搜索词
+ * 在Android App中，这会调用原生方法打开WebView
+ */
+function openSiteForSearch() {
+    const btn = document.getElementById('openSiteBtn');
+    const siteUrl = btn.dataset.siteUrl;
+    
+    if (!siteUrl) {
+        showToast('⚠️ 请先输入网站URL');
+        return;
+    }
+    
+    // 标记步骤1完成，步骤2激活
+    document.getElementById('step1').classList.remove('active');
+    document.getElementById('step1').classList.add('done');
+    document.getElementById('step2').classList.add('active');
+    
+    // 复制搜索词到剪贴板
+    copySearchKeyword();
+    
+    if (window.Android && window.Android.openUrl) {
+        // Android原生：打开WebView
+        window.Android.openUrl(siteUrl);
+        showToast('🌐 已打开网站，请粘贴搜索词进行搜索');
+    } else {
+        // 浏览器环境：打开新标签页
+        window.open(siteUrl, '_blank');
+        showToast('🌐 已打开网站，请粘贴搜索词进行搜索');
+    }
+    
+    // 禁用按钮防止重复点击
+    btn.disabled = true;
+    btn.textContent = '✅ 网站已打开，请搜索';
+}
+
+/**
+ * 复制搜索词到剪贴板
+ */
+function copySearchKeyword() {
+    const keyword = DEFAULT_SEARCH_KEYWORD;
+    const btn = document.getElementById('copyKeywordBtn');
+    
+    if (window.Android && window.Android.copyToClipboard) {
+        window.Android.copyToClipboard(keyword);
+    } else {
+        navigator.clipboard.writeText(keyword).catch(() => {
+            const textarea = document.createElement('textarea');
+            textarea.value = keyword;
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+        });
+    }
+    
+    // 按钮反馈
+    btn.textContent = '✅ 已复制 "' + keyword + '"';
+    btn.classList.add('copied');
+    setTimeout(() => {
+        btn.textContent = '📝 复制搜索词';
+        btn.classList.remove('copied');
+    }, 3000);
+    
+    showToast('📋 已复制搜索词 "' + keyword + '" 到剪贴板');
+}
+
+/**
+ * 搜索URL输入框变化时
+ */
+function onSearchUrlInput(textarea) {
+    const value = textarea.value.trim();
+    const parseBtn = document.getElementById('parseSearchUrlBtn');
+    
+    if (value) {
+        textarea.classList.add('has-value');
+        parseBtn.disabled = false;
+        
+        // 标记步骤3完成，步骤4激活
+        document.getElementById('step3').classList.remove('active');
+        document.getElementById('step3').classList.add('done');
+        document.getElementById('step4').classList.add('active');
+        
+        // 自动解析（延迟500ms，等用户粘贴完）
+        clearTimeout(textarea._parseTimer);
+        textarea._parseTimer = setTimeout(() => {
+            parseSearchUrl();
+        }, 500);
+    } else {
+        textarea.classList.remove('has-value');
+        parseBtn.disabled = true;
+    }
+}
+
+/**
+ * 解析搜索URL
+ * 从用户粘贴的搜索结果URL中提取搜索格式
+ */
+function parseSearchUrl() {
+    const urlInput = document.getElementById('searchResultUrl');
+    const url = urlInput.value.trim();
+    const parseBtn = document.getElementById('parseSearchUrlBtn');
+    const resultDiv = document.getElementById('parsedSearchResult');
+    
+    if (!url) {
+        showToast('⚠️ 请先粘贴搜索结果URL');
+        return;
+    }
+    
+    parseBtn.disabled = true;
+    parseBtn.textContent = '⏳ 解析中...';
+    
+    try {
+        // 使用分析引擎解析搜索URL
+        const analyzer = new BookSourceAnalyzer();
+        const parsed = analyzer.parseSearchUrl(url, DEFAULT_SEARCH_KEYWORD);
+        
+        if (!parsed || !parsed.url) {
+            throw new Error('无法解析搜索URL');
+        }
+        
+        // 保存解析结果
+        capturedSearchUrl = parsed.url;
+        
+        // 显示解析结果
+        const methodBadge = parsed.method === 'POST' 
+            ? '<span class="method-badge post">POST</span>' 
+            : '<span class="method-badge get">GET</span>';
+        
+        let detailHtml = '';
+        if (parsed.method === 'POST' && parsed.body) {
+            detailHtml = `<br><small>Body: ${escapeHtml(parsed.body)}</small>`;
+        }
+        if (parsed.charset && parsed.charset !== 'utf-8') {
+            detailHtml += `<br><small>编码: ${parsed.charset}</small>`;
+        }
+        
+        resultDiv.innerHTML = `
+            ✅ 解析成功！
+            <div style="margin-top:8px;font-size:12px;color:#555;">
+                ${methodBadge} 搜索方式
+            </div>
+            <code>${escapeHtml(parsed.url)}</code>
+            ${detailHtml}
+            <div style="margin-top:8px;font-size:12px;color:#555;">
+                💡 阅读App将用 <strong>{{key}}</strong> 替换搜索关键词
+            </div>
+        `;
+        resultDiv.classList.remove('hidden');
+        
+        // 标记步骤4完成
+        document.getElementById('step4').classList.remove('active');
+        document.getElementById('step4').classList.add('done');
+        
+        // 更新书源中的搜索URL
+        if (currentResult && currentResult.bookSource) {
+            currentResult.bookSource.searchUrl = parsed.url;
+        }
+        
+        // 显示"继续生成"按钮
+        parseBtn.textContent = '✅ 解析完成，继续生成书源';
+        parseBtn.onclick = continueWithCapturedUrl;
+        
+        showToast('✅ 搜索URL解析成功！');
+        
+    } catch (error) {
+        resultDiv.innerHTML = `
+            ❌ 解析失败：${escapeHtml(error.message)}
+            <div style="margin-top:8px;font-size:12px;color:#999;">
+                请确认粘贴的是完整的搜索结果URL（包含搜索关键词）
+            </div>
+        `;
+        resultDiv.classList.remove('hidden');
+        resultDiv.style.background = '#ffebee';
+        resultDiv.style.color = '#c62828';
+        
+        parseBtn.disabled = false;
+        parseBtn.textContent = '🔄 重新解析';
+        parseBtn.onclick = parseSearchUrl;
+    }
+}
+
+/**
+ * 使用捕获的URL继续生成书源
+ */
+function continueWithCapturedUrl() {
+    if (!currentResult) {
+        showToast('⚠️ 请先分析网站');
+        return;
+    }
+    
+    // 更新搜索URL
+    if (capturedSearchUrl) {
+        currentResult.bookSource.searchUrl = capturedSearchUrl;
+    }
+    
+    // 隐藏搜索捕获界面
+    document.getElementById('searchCaptureSection').classList.add('hidden');
+    
+    // 显示结果
+    displayResult(currentResult);
+    document.getElementById('resultSection').classList.remove('hidden');
+    
+    showToast('✅ 书源生成完成！');
+}
+
+/**
+ * 跳过搜索URL捕获，使用自动检测的URL
+ */
+function skipSearchCapture() {
+    if (!currentResult) {
+        showToast('⚠️ 请先分析网站');
+        return;
+    }
+    
+    // 隐藏搜索捕获界面
+    document.getElementById('searchCaptureSection').classList.add('hidden');
+    
+    // 显示结果
+    displayResult(currentResult);
+    document.getElementById('resultSection').classList.remove('hidden');
+    
+    showToast('ℹ️ 已使用自动检测的搜索URL');
 }
 
 /**
@@ -367,7 +657,15 @@ function resetUI() {
     document.getElementById('errorSection').classList.add('hidden');
     document.getElementById('resultSection').classList.add('hidden');
     document.getElementById('loadingSection').classList.add('hidden');
+    document.getElementById('searchCaptureSection').classList.add('hidden');
     document.getElementById('filePathHint').classList.add('hidden');
+    
+    // 重置搜索捕获状态
+    capturedSearchUrl = null;
+    const parseBtn = document.getElementById('parseSearchUrlBtn');
+    parseBtn.disabled = true;
+    parseBtn.textContent = '🔄 解析搜索URL';
+    parseBtn.onclick = parseSearchUrl;
 }
 
 /**
