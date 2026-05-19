@@ -22,12 +22,11 @@ jobs:
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
 
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
-      working-directory: ${{ github.workspace }}/android
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v4
 
     - name: Build with Gradle
-      run: ./gradlew assembleDebug
+      run: gradle assembleDebug
       working-directory: ${{ github.workspace }}/android
 
     - name: Upload APK
