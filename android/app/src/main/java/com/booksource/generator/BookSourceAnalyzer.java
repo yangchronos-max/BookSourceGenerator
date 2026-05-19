@@ -13,15 +13,10 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * 书源分析引擎 - Android原生实现
- * 使用Jsoup解析HTML，生成符合阅读App（legado）格式的书源JSON
+ * 书源分析引擎 v2.0 - 智能分析
  * 
- * 阅读App书源格式（从源码BookSource.kt/BookListRule.kt/BookInfoRule.kt/TocRule.kt/ContentRule.kt提取）：
- * 
- * ruleSearch (BookListRule): { bookList, name, author, coverUrl, bookUrl, intro, kind, lastChapter, updateTime, wordCount }
- * ruleBookInfo (BookInfoRule): { init, name, author, intro, kind, lastChapter, updateTime, coverUrl, tocUrl, wordCount, canReName, downloadUrls }
- * ruleToc (TocRule): { preUpdateJs, chapterList, chapterName, chapterUrl, formatJs, isVolume, isVip, isPay, updateTime, nextTocUrl }
- * ruleContent (ContentRule): { content, title, nextContentUrl, webJs, sourceRegex, replaceRegex, imageStyle, imageDecode, payAction }
+ * 核心改进：不仅分析首页，还会模拟搜索请求，分析搜索结果页的HTML结构
+ * 从而生成真正匹配的搜索规则
  */
 public class BookSourceAnalyzer {
 
@@ -29,22 +24,13 @@ public class BookSourceAnalyzer {
     private static final String USER_AGENT = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
 
-    /**
-     * 分析网站并生成书源
-     */
     public JSONObject analyze(String url, String siteName) throws Exception {
-        // 1. 获取网页内容
         Document doc = fetchPage(url);
-        String html = doc.html();
-
-        // 2. 提取网站信息
         String title = doc.title();
         String name = (siteName != null && !siteName.isEmpty()) ? siteName : extractSiteName(url, title);
 
-        // 3. 生成符合阅读App格式的书源
-        JSONObject bookSource = generateBookSource(url, name, doc, html);
+        JSONObject bookSource = generateBookSource(url, name, doc);
 
-        // 4. 返回结果
         JSONObject result = new JSONObject();
         result.put("bookSource", bookSource);
         JSONObject detected = new JSONObject();
@@ -55,9 +41,6 @@ public class BookSourceAnalyzer {
         return result;
     }
 
-    /**
-     * 获取网页内容
-     */
     private Document fetchPage(String url) throws IOException {
         return Jsoup.connect(url)
                 .userAgent(USER_AGENT)
@@ -67,9 +50,6 @@ public class BookSourceAnalyzer {
                 .get();
     }
 
-    /**
-     * 提取网站名称
-     */
     private String extractSiteName(String url, String title) {
         if (title != null && !title.isEmpty()) {
             String clean = title.replaceAll("[-_|].*$", "").trim();
@@ -87,9 +67,6 @@ public class BookSourceAnalyzer {
         }
     }
 
-    /**
-     * 清理URL
-     */
     private String cleanUrl(String url) {
         try {
             java.net.URL u = new java.net.URL(url);
@@ -100,91 +77,388 @@ public class BookSourceAnalyzer {
     }
 
     /**
-     * 生成符合阅读App格式的书源
+     * 生成书源 - 核心方法
      */
-    private JSONObject generateBookSource(String url, String name, Document doc, String html) {
+    private JSONObject generateBookSource(String url, String name, Document doc) throws IOException {
         JSONObject bookSource = new JSONObject();
+        String baseUrl = cleanUrl(url);
+
+        // 基础信息
+        bookSource.put("bookSourceGroup", "自动生成");
+        bookSource.put("bookSourceName", name);
+        bookSource.put("bookSourceUrl", baseUrl);
+        bookSource.put("bookSourceType", 0);
+        bookSource.put("bookSourceComment", "由书源生成器自动生成");
+        bookSource.put("enabled", true);
+        bookSource.put("enabledExplore", true);
+        bookSource.put("enabledCookieJar", true);
+        bookSource.put("concurrentRate", "1");
+
+        // ========== 1. 检测搜索URL ==========
+        String searchUrl = detectSearchUrl(url, doc);
+        bookSource.put("searchUrl", searchUrl);
+
+        // ========== 2. 模拟搜索请求，分析搜索结果页 ==========
+        // 使用"我"作为测试关键词（几乎所有小说网站都有"我"字的小说）
+        String testKeyword = "我";
+        String testSearchUrl = searchUrl.replace("{{key}}", URLEncoder.encode(testKeyword, "UTF-8"));
+        
+        JSONObject searchRules = new JSONObject();
+        JSONObject bookInfoRules = new JSONObject();
+        JSONObject tocRules = new JSONObject();
+        JSONObject contentRules = new JSONObject();
 
         try {
-            // 基础信息
-            bookSource.put("bookSourceGroup", "自动生成");
-            bookSource.put("bookSourceName", name);
-            bookSource.put("bookSourceUrl", cleanUrl(url));
-            bookSource.put("bookSourceType", 0);
-            bookSource.put("bookSourceComment", "由书源生成器自动生成");
-            bookSource.put("header", "{\"User-Agent\":\"" + USER_AGENT + "\"}");
-            bookSource.put("httpUserAgent", USER_AGENT);
-            bookSource.put("enabled", true);
-            bookSource.put("enabledExplore", true);
-            bookSource.put("enabledCookieJar", true);
-            bookSource.put("concurrentRate", "1");
-
-            // 搜索URL - 使用{{key}}占位符（阅读App标准）
-            String searchUrl = detectSearchUrl(url, doc);
-            if (searchUrl != null && !searchUrl.isEmpty()) {
-                bookSource.put("searchUrl", searchUrl);
+            Log.d("BookSourceAnalyzer", "正在模拟搜索: " + testSearchUrl);
+            Document searchDoc = fetchPage(testSearchUrl);
+            String searchHtml = searchDoc.html();
+            
+            // 分析搜索结果页结构
+            analyzeSearchPage(searchDoc, searchRules, bookInfoRules);
+            
+            // 如果搜索结果中有书籍，点击第一本分析详情页
+            String firstBookUrl = findFirstBookUrl(searchDoc, baseUrl);
+            if (firstBookUrl != null && !firstBookUrl.isEmpty()) {
+                Log.d("BookSourceAnalyzer", "正在分析详情页: " + firstBookUrl);
+                Document bookDoc = fetchPage(firstBookUrl);
+                analyzeBookPage(bookDoc, bookInfoRules, tocRules, contentRules);
             }
-
-            // ruleSearch - 搜索规则（BookListRule）
-            JSONObject ruleSearch = new JSONObject();
-            putIfNotEmpty(ruleSearch, "bookList", detectSearchList(doc));
-            putIfNotEmpty(ruleSearch, "name", detectSearchName(doc));
-            putIfNotEmpty(ruleSearch, "author", detectSearchAuthor(doc));
-            putIfNotEmpty(ruleSearch, "coverUrl", detectSearchCover(doc));
-            putIfNotEmpty(ruleSearch, "bookUrl", detectSearchBookUrl(doc));
-            if (ruleSearch.length() > 0) {
-                bookSource.put("ruleSearch", ruleSearch);
-            }
-
-            // ruleBookInfo - 书籍信息规则（BookInfoRule）
-            JSONObject ruleBookInfo = new JSONObject();
-            putIfNotEmpty(ruleBookInfo, "name", detectBookName(doc));
-            putIfNotEmpty(ruleBookInfo, "author", detectBookAuthor(doc));
-            putIfNotEmpty(ruleBookInfo, "coverUrl", detectCover(doc));
-            putIfNotEmpty(ruleBookInfo, "kind", detectBookKind(doc));
-            putIfNotEmpty(ruleBookInfo, "intro", detectIntroduce(doc));
-            putIfNotEmpty(ruleBookInfo, "tocUrl", detectTocUrl(doc));
-            putIfNotEmpty(ruleBookInfo, "lastChapter", detectLastChapter(doc));
-            if (ruleBookInfo.length() > 0) {
-                bookSource.put("ruleBookInfo", ruleBookInfo);
-            }
-
-            // ruleToc - 目录规则（TocRule）
-            JSONObject ruleToc = new JSONObject();
-            putIfNotEmpty(ruleToc, "chapterList", detectChapterList(doc));
-            putIfNotEmpty(ruleToc, "chapterName", detectChapterName(doc));
-            putIfNotEmpty(ruleToc, "chapterUrl", detectChapterUrl(doc));
-            if (ruleToc.length() > 0) {
-                bookSource.put("ruleToc", ruleToc);
-            }
-
-            // ruleContent - 内容规则（ContentRule）
-            JSONObject ruleContent = new JSONObject();
-            putIfNotEmpty(ruleContent, "content", detectContent(doc));
-            putIfNotEmpty(ruleContent, "nextContentUrl", detectNextContentUrl(doc));
-            if (ruleContent.length() > 0) {
-                bookSource.put("ruleContent", ruleContent);
-            }
-
         } catch (Exception e) {
-            e.printStackTrace();
+            Log.d("BookSourceAnalyzer", "搜索模拟失败，使用首页分析: " + e.getMessage());
+            // 如果搜索失败，回退到首页分析
+            analyzeHomePage(doc, searchRules, bookInfoRules, tocRules, contentRules);
         }
+
+        // 设置规则
+        if (searchRules.length() > 0) bookSource.put("ruleSearch", searchRules);
+        if (bookInfoRules.length() > 0) bookSource.put("ruleBookInfo", bookInfoRules);
+        if (tocRules.length() > 0) bookSource.put("ruleToc", tocRules);
+        if (contentRules.length() > 0) bookSource.put("ruleContent", contentRules);
 
         return bookSource;
     }
 
-    private void putIfNotEmpty(JSONObject obj, String key, String value) {
-        if (value != null && !value.isEmpty()) {
+    /**
+     * 分析搜索结果页 - 智能检测列表容器和字段
+     */
+    private void analyzeSearchPage(Document doc, JSONObject searchRules, JSONObject bookInfoRules) {
+        // 查找所有可能的列表容器
+        Map<String, Integer> containerCandidates = new HashMap<>();
+        
+        // 检测ul/ol列表
+        Elements lists = doc.select("ul, ol, table, div[class]");
+        for (Element list : lists) {
+            int childCount = list.children().size();
+            if (childCount >= 3 && childCount <= 100) {
+                String selector = buildSelector(list);
+                containerCandidates.put(selector, childCount);
+            }
+        }
+
+        // 选择包含最多子元素的容器
+        String bestContainer = "";
+        int maxChildren = 0;
+        for (Map.Entry<String, Integer> entry : containerCandidates.entrySet()) {
+            if (entry.getValue() > maxChildren) {
+                maxChildren = entry.getValue();
+                bestContainer = entry.getKey();
+            }
+        }
+
+        if (!bestContainer.isEmpty()) {
+            String itemSelector = bestContainer + " > li, " + bestContainer + " > tr, " + bestContainer + " > div";
+            Elements items = doc.select(itemSelector);
+            
+            if (items.size() >= 2) {
+                searchRules.put("bookList", itemSelector);
+                
+                // 分析第一个项目，检测各个字段
+                Element firstItem = items.first();
+                if (firstItem != null) {
+                    // 检测书名（找链接）
+                    Element nameLink = firstItem.select("a").first();
+                    if (nameLink != null) {
+                        String nameSelector = itemSelector + " a";
+                        searchRules.put("name", nameSelector);
+                        searchRules.put("bookUrl", nameSelector + "@href");
+                    }
+                    
+                    // 检测作者
+                    Element author = firstItem.select(".author, [class*=author], [class*=writer], td:nth-child(2), td:nth-child(3)").first();
+                    if (author != null) {
+                        searchRules.put("author", itemSelector + " .author, " + itemSelector + " [class*=author]");
+                    }
+                    
+                    // 检测封面
+                    Element cover = firstItem.select("img").first();
+                    if (cover != null) {
+                        searchRules.put("coverUrl", itemSelector + " img@src");
+                    }
+                }
+            }
+        }
+
+        // 如果上面的检测失败，使用通用规则
+        if (!searchRules.has("bookList")) {
+            searchRules.put("bookList", "li, tr, .item, .book-item, .result-item");
+        }
+        if (!searchRules.has("name")) {
+            searchRules.put("name", "a");
+        }
+        if (!searchRules.has("bookUrl")) {
+            searchRules.put("bookUrl", "a@href");
+        }
+    }
+
+    /**
+     * 分析书籍详情页
+     */
+    private void analyzeBookPage(Document doc, JSONObject bookInfoRules, JSONObject tocRules, JSONObject contentRules) {
+        // 书名
+        Element metaName = doc.selectFirst("meta[property=og:novel:book_name], meta[property=og:title]");
+        if (metaName != null) {
+            bookInfoRules.put("name", "meta[property=\"" + metaName.attr("property") + "\"]@content");
+        } else {
+            Element h1 = doc.selectFirst("h1");
+            if (h1 != null) bookInfoRules.put("name", "h1");
+        }
+
+        // 作者
+        Element metaAuthor = doc.selectFirst("meta[property=og:novel:author]");
+        if (metaAuthor != null) {
+            bookInfoRules.put("author", "meta[property=\"og:novel:author\"]@content");
+        } else {
+            Element author = doc.selectFirst(".author, [class*=author]");
+            if (author != null) bookInfoRules.put("author", ".author");
+        }
+
+        // 封面
+        Element metaCover = doc.selectFirst("meta[property=og:image]");
+        if (metaCover != null) {
+            bookInfoRules.put("coverUrl", "meta[property=\"og:image\"]@content");
+        }
+
+        // 简介
+        Element metaDesc = doc.selectFirst("meta[property=og:description]");
+        if (metaDesc != null) {
+            bookInfoRules.put("intro", "meta[property=\"og:description\"]@content");
+        } else {
+            Element intro = doc.selectFirst(".intro, .desc, .description, #intro, #description");
+            if (intro != null) bookInfoRules.put("intro", ".intro, .desc, .description");
+        }
+
+        // 分类
+        Element metaKind = doc.selectFirst("meta[property=og:novel:category]");
+        if (metaKind != null) {
+            bookInfoRules.put("kind", "meta[property=\"og:novel:category\"]@content");
+        }
+
+        // 最新章节
+        Element metaLast = doc.selectFirst("meta[property=og:novel:latest_chapter_name]");
+        if (metaLast != null) {
+            bookInfoRules.put("lastChapter", "meta[property=\"og:novel:latest_chapter_name\"]@content");
+        }
+
+        // 目录链接
+        Element tocLink = doc.selectFirst("a:contains(目录), a:contains(章节目录), a:contains(全部章节), a[href*=chapter], a[href*=catalog]");
+        if (tocLink != null) {
+            String tocHref = tocLink.attr("href");
+            if (!tocHref.isEmpty()) {
+                bookInfoRules.put("tocUrl", "a:contains(" + tocLink.text().trim() + ")@href");
+            }
+        }
+
+        // 分析目录页
+        String tocUrl = null;
+        if (tocLink != null) {
+            tocUrl = tocLink.attr("href");
+            if (!tocUrl.startsWith("http")) {
+                String base = cleanUrl(doc.location());
+                tocUrl = base + (tocUrl.startsWith("/") ? "" : "/") + tocUrl;
+            }
+        }
+
+        // 如果当前页面就是目录页，或者有目录链接，分析目录
+        Document tocDoc = null;
+        if (tocUrl != null && !tocUrl.equals(doc.location())) {
             try {
-                obj.put(key, value);
+                tocDoc = fetchPage(tocUrl);
             } catch (Exception e) {
-                // ignore
+                tocDoc = doc;
+            }
+        } else {
+            tocDoc = doc;
+        }
+
+        if (tocDoc != null) {
+            analyzeTocPage(tocDoc, tocRules);
+        }
+
+        // 分析内容页
+        analyzeContentPage(doc, contentRules);
+    }
+
+    /**
+     * 分析目录页
+     */
+    private void analyzeTocPage(Document doc, JSONObject tocRules) {
+        // 找章节列表
+        String[] listSelectors = {
+            "#list", ".list", ".chapter-list", ".chapters", ".chapterlist",
+            "#chapters", "#chapter-list", "#catalog", ".catalog",
+            "ul.chapter", "ul.chapters", "ul.list"
+        };
+
+        for (String selector : listSelectors) {
+            Elements elements = doc.select(selector);
+            if (elements.size() >= 2) {
+                tocRules.put("chapterList", selector + " li");
+                tocRules.put("chapterName", "a");
+                tocRules.put("chapterUrl", "a@href");
+                return;
+            }
+        }
+
+        // 通用检测：找包含最多链接的ul
+        Elements uls = doc.select("ul");
+        Element bestUl = null;
+        int maxLinks = 0;
+        for (Element ul : uls) {
+            int links = ul.select("a[href]").size();
+            if (links > maxLinks) {
+                maxLinks = links;
+                bestUl = ul;
+            }
+        }
+        if (bestUl != null && maxLinks >= 3) {
+            String id = bestUl.id();
+            String cls = bestUl.className();
+            if (!id.isEmpty()) {
+                tocRules.put("chapterList", "#" + id + " li");
+            } else if (!cls.isEmpty()) {
+                tocRules.put("chapterList", "." + cls.replace(" ", ".") + " li");
+            } else {
+                tocRules.put("chapterList", "ul li");
+            }
+            tocRules.put("chapterName", "a");
+            tocRules.put("chapterUrl", "a@href");
+        }
+    }
+
+    /**
+     * 分析内容页
+     */
+    private void analyzeContentPage(Document doc, JSONObject contentRules) {
+        String[] contentSelectors = {
+            "#content", ".content", ".bookcontent", ".chapter-content",
+            "#bookcontent", "#chaptercontent", "#textcontent",
+            ".read-content", ".novel-content", ".txt",
+            "article", "main"
+        };
+
+        for (String selector : contentSelectors) {
+            Element element = doc.selectFirst(selector);
+            if (element != null && element.text().length() > 100) {
+                contentRules.put("content", selector);
+                return;
+            }
+        }
+
+        // 找包含最多文本的div
+        Element bestContent = null;
+        int maxText = 0;
+        Elements divs = doc.select("div");
+        for (Element div : divs) {
+            int textLen = div.text().length();
+            if (textLen > maxText && textLen > 200) {
+                maxText = textLen;
+                bestContent = div;
+            }
+        }
+        if (bestContent != null) {
+            String id = bestContent.id();
+            String cls = bestContent.className();
+            if (!id.isEmpty()) {
+                contentRules.put("content", "#" + id);
+            } else if (!cls.isEmpty()) {
+                contentRules.put("content", "." + cls.replace(" ", "."));
             }
         }
     }
 
     /**
-     * 检测搜索URL - 阅读App使用{{key}}作为搜索关键词占位符
+     * 从搜索结果中找到第一本书的详情页URL
+     */
+    private String findFirstBookUrl(Document doc, String baseUrl) {
+        // 找第一个有href的链接
+        Elements links = doc.select("a[href]");
+        for (Element link : links) {
+            String href = link.attr("href");
+            String text = link.text().trim();
+            if (!href.isEmpty() && !href.startsWith("#") && !href.startsWith("javascript") && text.length() > 1) {
+                if (!href.startsWith("http")) {
+                    href = baseUrl + (href.startsWith("/") ? "" : "/") + href;
+                }
+                return href;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 回退方案：从首页分析
+     */
+    private void analyzeHomePage(Document doc, JSONObject searchRules, JSONObject bookInfoRules, 
+                                  JSONObject tocRules, JSONObject contentRules) {
+        // 搜索规则 - 通用默认值
+        searchRules.put("bookList", "li, tr, .item, .book-item, .result-item");
+        searchRules.put("name", "a");
+        searchRules.put("bookUrl", "a@href");
+
+        // 书籍信息 - 从meta标签获取
+        Element metaName = doc.selectFirst("meta[property=og:novel:book_name], meta[property=og:title]");
+        if (metaName != null) {
+            bookInfoRules.put("name", "meta[property=\"" + metaName.attr("property") + "\"]@content");
+        }
+        Element metaAuthor = doc.selectFirst("meta[property=og:novel:author]");
+        if (metaAuthor != null) {
+            bookInfoRules.put("author", "meta[property=\"og:novel:author\"]@content");
+        }
+        Element metaCover = doc.selectFirst("meta[property=og:image]");
+        if (metaCover != null) {
+            bookInfoRules.put("coverUrl", "meta[property=\"og:image\"]@content");
+        }
+        Element metaDesc = doc.selectFirst("meta[property=og:description]");
+        if (metaDesc != null) {
+            bookInfoRules.put("intro", "meta[property=\"og:description\"]@content");
+        }
+
+        // 目录规则
+        analyzeTocPage(doc, tocRules);
+
+        // 内容规则
+        analyzeContentPage(doc, contentRules);
+    }
+
+    /**
+     * 构建元素的选择器
+     */
+    private String buildSelector(Element element) {
+        String tag = element.tagName();
+        String id = element.id();
+        String cls = element.className();
+        
+        if (!id.isEmpty()) {
+            return "#" + id;
+        }
+        if (!cls.isEmpty()) {
+            return tag + "." + cls.trim().replaceAll("\\s+", ".");
+        }
+        return tag;
+    }
+
+    /**
+     * 检测搜索URL
      */
     private String detectSearchUrl(String url, Document doc) {
         // 查找搜索表单
@@ -231,432 +505,10 @@ public class BookSourceAnalyzer {
         return cleanUrl(url) + "/search?keyword={{key}}";
     }
 
-    /**
-     * 检测搜索列表选择器 - 每本书的容器
-     */
-    private String detectSearchList(Document doc) {
-        String[] selectors = {
-            ".search-list", ".search_result", ".result-list", ".book-list",
-            ".list", ".booklist", ".book_list", ".books-list",
-            "ul.list", "ul.book-list",
-            "#list", "#booklist", "#search-list", "#search_result",
-            ".novelslist", ".novels-list", ".s-list", ".s_result",
-            ".item", ".result-item", ".book-item",
-            "li", "tr", ".search-item"
-        };
-
-        for (String selector : selectors) {
-            Elements elements = doc.select(selector);
-            if (elements.size() >= 2) {
-                return selector;
-            }
+    // 简单的日志类
+    private static class Log {
+        static void d(String tag, String msg) {
+            System.out.println(tag + ": " + msg);
         }
-
-        return "";
-    }
-
-    /**
-     * 检测搜索书名选择器
-     */
-    private String detectSearchName(Document doc) {
-        String[] selectors = {
-            "h3 a", "h4 a", "h2 a",
-            ".bookname a", ".book-name a", ".name a",
-            ".title a", ".book_title a",
-            "a[title]", "a[href*=book]",
-            "td:first-child a", "td a",
-            "li a", ".book-item a",
-            "a"
-        };
-
-        for (String selector : selectors) {
-            Elements elements = doc.select(selector);
-            if (elements.size() >= 2) {
-                return selector;
-            }
-        }
-
-        return "";
-    }
-
-    /**
-     * 检测搜索作者选择器
-     */
-    private String detectSearchAuthor(Document doc) {
-        String[] selectors = {
-            ".author", ".bookauthor", ".book-author",
-            "td.author", "td:nth-child(2)",
-            ".info .author", ".book-info .author",
-            "span.author", "p.author",
-            ".byline", ".writer",
-            "td:nth-child(3)", "td:nth-child(4)",
-            ".book-item .author"
-        };
-
-        for (String selector : selectors) {
-            Elements elements = doc.select(selector);
-            if (elements.size() >= 2) {
-                return selector;
-            }
-        }
-
-        return "";
-    }
-
-    /**
-     * 检测搜索封面选择器
-     */
-    private String detectSearchCover(Document doc) {
-        String[] selectors = {
-            "img.cover", "img.bookcover",
-            ".cover img", ".bookcover img",
-            "td img", "li img", ".item img",
-            "img[src*=cover]", "img[src*=book]",
-            ".book-item img"
-        };
-
-        for (String selector : selectors) {
-            Elements elements = doc.select(selector);
-            if (elements.size() >= 2) {
-                return selector + "@src";
-            }
-        }
-
-        return "";
-    }
-
-    /**
-     * 检测搜索书籍URL选择器 - 关键！阅读App需要这个才能跳转到详情页
-     */
-    private String detectSearchBookUrl(Document doc) {
-        String[] selectors = {
-            "h3 a", "h4 a", "h2 a",
-            ".bookname a", ".book-name a", ".name a",
-            ".title a", ".book_title a",
-            "a[title]", "a[href*=book]",
-            "td:first-child a", "td a",
-            "li a", ".book-item a",
-            "a"
-        };
-
-        for (String selector : selectors) {
-            Elements elements = doc.select(selector);
-            if (elements.size() >= 2) {
-                return selector + "@href";
-            }
-        }
-
-        return "";
-    }
-
-    /**
-     * 检测书名选择器
-     */
-    private String detectBookName(Document doc) {
-        // 先检查meta标签
-        Element meta = doc.selectFirst("meta[property=og:novel:book_name], meta[property=og:title], meta[property=og:novel:book_name]");
-        if (meta != null) {
-            return "meta[property=\"" + meta.attr("property") + "\"]@content";
-        }
-
-        String[] selectors = {
-            ".bookname", ".book-name", ".book_name",
-            ".booktitle", ".book-title", ".book_title",
-            ".name", ".title", ".bookInfo .name",
-            ".book-info .name", ".bookInfo .title",
-            "h1", "h2.bookname", "h1.bookname",
-            ".detail h1", ".detail h2",
-            "h1:first-of-type", "h2:first-of-type",
-            ".info h1", ".info h2"
-        };
-
-        for (String selector : selectors) {
-            Element element = doc.selectFirst(selector);
-            if (element != null) {
-                return selector;
-            }
-        }
-
-        return "";
-    }
-
-    /**
-     * 检测作者选择器
-     */
-    private String detectBookAuthor(Document doc) {
-        // 先检查meta标签
-        Element meta = doc.selectFirst("meta[property=og:novel:author], meta[property=book:author]");
-        if (meta != null) {
-            return "meta[property=\"" + meta.attr("property") + "\"]@content";
-        }
-
-        String[] selectors = {
-            ".author", ".bookauthor", ".book-author",
-            ".writer", ".byline",
-            ".info .author", ".book-info .author",
-            ".detail .author", ".bookInfo .author",
-            "span.author", "p.author"
-        };
-
-        for (String selector : selectors) {
-            Element element = doc.selectFirst(selector);
-            if (element != null) {
-                return selector;
-            }
-        }
-
-        return "";
-    }
-
-    /**
-     * 检测封面选择器
-     */
-    private String detectCover(Document doc) {
-        Element meta = doc.selectFirst("meta[property=og:image]");
-        if (meta != null) {
-            return "meta[property=\"og:image\"]@content";
-        }
-
-        Element link = doc.selectFirst("link[rel=image_src]");
-        if (link != null) {
-            return "link[rel=image_src]@href";
-        }
-
-        String[] selectors = {
-            ".cover img", ".bookcover img", ".book-cover img",
-            ".bookimg img", ".book-img img", ".pic img",
-            ".detail .cover img", ".bookInfo .cover img",
-            "img.cover", "img.bookcover"
-        };
-
-        for (String selector : selectors) {
-            Element element = doc.selectFirst(selector);
-            if (element != null) {
-                return selector + "@src";
-            }
-        }
-
-        return "";
-    }
-
-    /**
-     * 检测分类选择器
-     */
-    private String detectBookKind(Document doc) {
-        String[] selectors = {
-            ".kind", ".category", ".type", ".genre",
-            ".bookkind", ".book-kind", ".book_type",
-            ".info .kind", ".book-info .kind",
-            "meta[property=og:novel:category]"
-        };
-
-        for (String selector : selectors) {
-            Element element = doc.selectFirst(selector);
-            if (element != null) {
-                if (selector.startsWith("meta")) {
-                    return selector + "@content";
-                }
-                return selector;
-            }
-        }
-
-        return "";
-    }
-
-    /**
-     * 检测简介选择器
-     */
-    private String detectIntroduce(Document doc) {
-        Element meta = doc.selectFirst("meta[property=og:description], meta[name=description]");
-        if (meta != null) {
-            return "meta[name=\"" + meta.attr("name") + "\"]@content";
-        }
-
-        String[] selectors = {
-            ".intro", ".introduce", ".description",
-            ".desc", ".bookdesc", ".book-desc",
-            ".summary", ".book-summary",
-            ".info .intro", ".book-info .intro",
-            ".detail .intro", ".bookInfo .intro",
-            "#intro", "#description"
-        };
-
-        for (String selector : selectors) {
-            Element element = doc.selectFirst(selector);
-            if (element != null) {
-                return selector;
-            }
-        }
-
-        return "";
-    }
-
-    /**
-     * 检测目录URL选择器
-     */
-    private String detectTocUrl(Document doc) {
-        // 查找"目录"或"章节目录"链接
-        Elements tocLinks = doc.select("a:contains(目录), a:contains(章节目录), a:contains(全部章节), " +
-                "a:contains(章节列表), a[href*=chapter], a[href*=catalog], a[href*=directory]");
-        for (Element link : tocLinks) {
-            String href = link.attr("href");
-            if (!href.isEmpty()) {
-                return "a:contains(" + link.text().trim() + ")@href";
-            }
-        }
-
-        return "";
-    }
-
-    /**
-     * 检测最新章节选择器
-     */
-    private String detectLastChapter(Document doc) {
-        String[] selectors = {
-            ".last", ".lastchapter", ".last-chapter",
-            ".newest", ".newchapter", ".new-chapter",
-            ".info .last", ".book-info .last",
-            "meta[property=og:novel:latest_chapter_name]"
-        };
-
-        for (String selector : selectors) {
-            Element element = doc.selectFirst(selector);
-            if (element != null) {
-                if (selector.startsWith("meta")) {
-                    return selector + "@content";
-                }
-                return selector;
-            }
-        }
-
-        return "";
-    }
-
-    /**
-     * 检测章节列表选择器
-     */
-    private String detectChapterList(Document doc) {
-        String[] selectors = {
-            "#list", ".list", ".chapter-list", ".chapters",
-            ".chapterlist", ".chapter_list", ".catalog",
-            ".directory", ".index", ".book-list",
-            "#chapters", "#chapter-list", "#catalog",
-            "ul.chapter", "ul.chapters", "ul.list",
-            ".book .list", ".book-list ul"
-        };
-
-        for (String selector : selectors) {
-            Elements elements = doc.select(selector);
-            if (elements.size() >= 2) {
-                return selector + " li";
-            }
-        }
-
-        // 通用检测：找包含最多链接的列表
-        Elements uls = doc.select("ul");
-        Element bestList = null;
-        int maxLinks = 0;
-        for (Element ul : uls) {
-            int links = ul.select("a[href]").size();
-            if (links > maxLinks) {
-                maxLinks = links;
-                bestList = ul;
-            }
-        }
-        if (bestList != null && maxLinks >= 5) {
-            String id = bestList.id();
-            String cls = bestList.className();
-            if (!id.isEmpty()) return "#" + id + " li";
-            if (!cls.isEmpty()) return "." + cls.replace(" ", ".") + " li";
-            return "ul li";
-        }
-
-        return "";
-    }
-
-    /**
-     * 检测章节名称选择器
-     */
-    private String detectChapterName(Document doc) {
-        String[] selectors = {
-            "li a", "li span", "td a",
-            "a[href*=html]", "a[href*=chapter]",
-            "a[href*=/]", "a"
-        };
-
-        for (String selector : selectors) {
-            Elements elements = doc.select(selector);
-            if (elements.size() >= 2) {
-                return selector;
-            }
-        }
-
-        return "";
-    }
-
-    /**
-     * 检测章节URL选择器
-     */
-    private String detectChapterUrl(Document doc) {
-        String[] selectors = {
-            "li a", "td a",
-            "a[href*=html]", "a[href*=chapter]",
-            "a[href*=/]", "a"
-        };
-
-        for (String selector : selectors) {
-            Elements elements = doc.select(selector);
-            if (elements.size() >= 2) {
-                return selector + "@href";
-            }
-        }
-
-        return "";
-    }
-
-    /**
-     * 检测内容选择器
-     */
-    private String detectContent(Document doc) {
-        String[] selectors = {
-            "#content", ".content", ".bookcontent", ".book-content",
-            ".text", ".article", ".chapter-content",
-            "#bookcontent", "#chaptercontent", "#textcontent",
-            ".read-content", ".novel-content", ".txt",
-            "article", "main",
-            "div[class*=content]", "div[id*=content]",
-            "div[class*=text]", "div[id*=text]",
-            "div[class*=chapter]", "div[id*=chapter]",
-            "p"
-        };
-
-        for (String selector : selectors) {
-            Element element = doc.selectFirst(selector);
-            if (element != null) {
-                return selector;
-            }
-        }
-
-        return "";
-    }
-
-    /**
-     * 检测下一页内容URL选择器
-     */
-    private String detectNextContentUrl(Document doc) {
-        String[] selectors = {
-            "a:contains(下一页)", "a:contains(下一章)",
-            "a.next", "a.next-chapter", "a#next",
-            "a[rel=next]", "a[href*=next]"
-        };
-
-        for (String selector : selectors) {
-            Element element = doc.selectFirst(selector);
-            if (element != null) {
-                return selector + "@href";
-            }
-        }
-
-        return "";
     }
 }
