@@ -215,7 +215,7 @@ async function copyResult() {
 function exportJson() {
     if (!currentResult) return;
 
-    const jsonStr = JSON.stringify([currentResult.bookSource], null, 2);
+    const jsonStr = JSON.stringify(currentResult.bookSource, null, 2);
     const fileName = `${currentResult.bookSource.bookSourceName || 'book-source'}.json`;
     
     // 使用Android原生接口保存
@@ -251,25 +251,28 @@ function exportJson() {
 }
 
 /**
- * 一键导入阅读App - 使用Android原生打开
+ * 一键导入阅读App - 使用legado协议直接导入
  */
 function importToReader() {
     if (!currentResult) return;
 
-    const jsonStr = JSON.stringify([currentResult.bookSource], null, 2);
+    const jsonStr = JSON.stringify(currentResult.bookSource, null, 2);
     
-    // 使用Android原生接口打开阅读App
+    // 使用Android原生接口
     if (window.Android && window.Android.openReaderApp) {
         window.Android.openReaderApp(jsonStr);
         showToast('📲 正在打开阅读App...');
-    } else {
-        // 浏览器备用方案
+        return;
+    }
+    
+    // 使用legado协议直接导入书源
+    try {
         const encoded = encodeURIComponent(jsonStr);
-        const timeout = setTimeout(() => {
-            showToast('📲 如果阅读App未打开，请先导出JSON再手动导入');
-        }, 2000);
-        window.location.href = `legado://import/bookSource?src=${encoded}`;
-        setTimeout(() => clearTimeout(timeout), 3000);
+        const legadoUrl = `legado://import/bookSource?src=${encoded}`;
+        window.location.href = legadoUrl;
+        showToast('📲 正在导入书源到阅读App...');
+    } catch (e) {
+        showToast('📲 请先导出JSON，然后在阅读App中手动导入');
     }
 }
 

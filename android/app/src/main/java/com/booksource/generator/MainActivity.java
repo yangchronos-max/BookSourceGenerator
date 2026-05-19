@@ -188,45 +188,31 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public void openReaderApp(String jsonContent) {
             try {
-                // 先保存JSON文件
-                String filename = "book_source_import.json";
-                File downloadsDir = Environment.getExternalStoragePublicDirectory(
-                    Environment.DIRECTORY_DOWNLOADS);
-                if (!downloadsDir.exists()) {
-                    downloadsDir.mkdirs();
-                }
-                File file = new File(downloadsDir, filename);
-                try (FileOutputStream fos = new FileOutputStream(file);
-                     OutputStreamWriter writer = new OutputStreamWriter(fos, StandardCharsets.UTF_8)) {
-                    writer.write(jsonContent);
-                    writer.flush();
-                }
-
-                // 尝试打开阅读App
-                String finalPath = file.getAbsolutePath();
+                // 使用legado协议直接导入书源
+                String encoded = Uri.encode(jsonContent);
+                String legadoUrl = "legado://import/bookSource?src=" + encoded;
+                
                 runOnUiThread(() -> {
                     try {
-                        // 方式1: legado协议
                         Intent intent = new Intent(Intent.ACTION_VIEW);
-                        intent.setData(Uri.parse("legado://"));
+                        intent.setData(Uri.parse(legadoUrl));
                         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                         startActivity(intent);
                     } catch (Exception e1) {
+                        // 如果legado协议失败，尝试通过包名打开
                         try {
-                            // 方式2: 通过包名打开
                             Intent launchIntent = getPackageManager().getLaunchIntentForPackage("com.gedoor.monkeybook");
+                            if (launchIntent == null) {
+                                launchIntent = getPackageManager().getLaunchIntentForPackage("com.gedoor.monkeybook.debug");
+                            }
                             if (launchIntent != null) {
                                 startActivity(launchIntent);
+                                showToast("已打开阅读App，请在书源管理中手动导入");
                             } else {
-                                launchIntent = getPackageManager().getLaunchIntentForPackage("com.gedoor.monkeybook.debug");
-                                if (launchIntent != null) {
-                                    startActivity(launchIntent);
-                                } else {
-                                    showToast("未检测到阅读App，请手动导入");
-                                }
+                                showToast("未检测到阅读App，请先安装阅读App");
                             }
                         } catch (Exception e2) {
-                            showToast("未检测到阅读App，请手动导入");
+                            showToast("未检测到阅读App，请先安装阅读App");
                         }
                     }
                 });
