@@ -1,5 +1,6 @@
 /**
  * 书源分析引擎 - 自动分析小说网站结构并生成 Legado 3.0 书源
+ * v2.0 - 改进版：更智能的规则检测
  */
 class BookSourceAnalyzer {
     constructor() {
@@ -11,10 +12,8 @@ class BookSourceAnalyzer {
      * 通过代理获取网页内容（绕过CORS限制）
      */
     async fetchPage(url) {
-        // 尝试多种方式获取页面内容
         const methods = [
             () => this.fetchWithCorsProxy(url),
-            () => this.fetchWithJsonp(url),
             () => this.fetchWithDirect(url)
         ];
 
@@ -72,36 +71,6 @@ class BookSourceAnalyzer {
     }
 
     /**
-     * JSONP方式获取（备用）
-     */
-    async fetchWithJsonp(url) {
-        return new Promise((resolve, reject) => {
-            const callbackName = 'jsonp_' + Date.now();
-            const script = document.createElement('script');
-            
-            window[callbackName] = (data) => {
-                delete window[callbackName];
-                document.body.removeChild(script);
-                resolve(typeof data === 'string' ? data : JSON.stringify(data));
-            };
-
-            script.src = url + (url.includes('?') ? '&' : '?') + 'callback=' + callbackName;
-            script.onerror = () => {
-                delete window[callbackName];
-                document.body.removeChild(script);
-                reject(new Error('JSONP failed'));
-            };
-            
-            document.body.appendChild(script);
-            setTimeout(() => {
-                delete window[callbackName];
-                document.body.removeChild(script);
-                reject(new Error('JSONP timeout'));
-            }, 8000);
-        });
-    }
-
-    /**
      * 解析HTML并分析网站结构
      */
     analyzeHTML(html, baseUrl) {
@@ -126,14 +95,11 @@ class BookSourceAnalyzer {
      */
     extractMeta(doc) {
         const meta = {};
-        
-        // 从meta标签提取
         doc.querySelectorAll('meta').forEach(el => {
             const name = el.getAttribute('name') || el.getAttribute('property') || '';
             const content = el.getAttribute('content') || '';
             if (name && content) meta[name.toLowerCase()] = content;
         });
-
         return meta;
     }
 
@@ -169,21 +135,17 @@ class BookSourceAnalyzer {
                 if (urlHost === baseHost) {
                     links.internal.push(linkInfo);
                     
-                    // 检测是否可能是小说链接
                     if (this.isLikelyNovelLink(fullUrl, text)) {
                         links.likelyNovel.push(linkInfo);
                     }
                     
-                    // 检测是否可能是章节链接
                     if (this.isLikelyChapterLink(fullUrl, text)) {
                         links.likelyChapter.push(linkInfo);
                     }
                 } else {
                     links.external.push(linkInfo);
                 }
-            } catch (e) {
-                // 忽略无效URL
-            }
+            } catch (e) {}
         });
 
         return links;
@@ -193,12 +155,9 @@ class BookSourceAnalyzer {
      * 检测是否可能是小说链接
      */
     isLikelyNovelLink(url, text) {
-        const novelKeywords = ['book', 'novel', '小说', 'novel', 'story', 'read', 'info', 'detail', 'bookinfo',
-                              'chapter', '目录', 'list', 'index', 'article', 'content', 'view'];
         const urlLower = url.toLowerCase();
         const textLower = text.toLowerCase();
 
-        // 检查URL模式
         const urlPatterns = [
             /\/book\//i, /\/novel\//i, /\/info\//i, /\/detail\//i,
             /\/read\//i, /\/story\//i, /bookinfo/i, /novelinfo/i,
@@ -209,13 +168,11 @@ class BookSourceAnalyzer {
             if (pattern.test(urlLower)) return true;
         }
 
-        // 检查文本内容
         const textPatterns = ['章', '节', '卷', '篇', '部', '集'];
         for (const keyword of textPatterns) {
             if (textLower.includes(keyword)) return true;
         }
 
-        // 检查URL中是否包含数字ID（可能是小说ID）
         const idMatch = url.match(/\/(\d{4,})\//);
         if (idMatch) return true;
 
@@ -236,7 +193,6 @@ class BookSourceAnalyzer {
         for (const pattern of chapterPatterns) {
             if (pattern.test(url) || pattern.test(text)) return true;
         }
-
         return false;
     }
 
@@ -250,22 +206,39 @@ class BookSourceAnalyzer {
         const navs = doc.querySelectorAll('nav, .nav, .menu, #nav, #menu, .navigation, .navbar');
         patterns.hasNavigation = navs.length > 0;
 
-        // 检测搜索框
-        const searchInputs = doc.querySelectorAll('input[type="text"], input[type="search"], input[name*="search"], input[id*="search"], input[class*="search"]');
+        // 检测搜索框 - 更全面的检测
+        const searchSelectors = [
+            'input[type="text"]', 'input[type="search"]',
+            'input[name*="search"]', 'input[id*="search"]', 'input[class*="search"]',
+            'input[name*="key"]', 'input[id*="key"]', 'input[class*="key"]',
+            'input[name*="keyword"]', 'input[id*="keyword"]',
+            'input[name*="wd"]', 'input[name*="word"]',
+            'input[name*="q"]', 'input[name*="query"]',
+            'input[name*="s"]', 'input[name*="so"]'
+        ];
+        
+        const searchInputs = doc.querySelectorAll(searchSelectors.join(','));
         patterns.hasSearch = searchInputs.length > 0;
         if (searchInputs.length > 0) {
+            const input = searchInputs[0];
             patterns.searchInput = {
-                selector: this.generateSelector(searchInputs[0]),
-                name: searchInputs[0].getAttribute('name') || searchInputs[0].getAttribute('id') || ''
+                selector: this.generateSelector(input),
+                name: input.getAttribute('name') || input.getAttribute('id') || 'searchkey'
             };
         }
 
         // 检测搜索按钮
-        const searchBtns = doc.querySelectorAll('button[type="submit"], input[type="submit"], button:has(input[name*="search"]), a[href*="search"], a[href*="so"]');
+        const searchBtns = doc.querySelectorAll('button[type="submit"], input[type="submit"]');
         patterns.hasSearchButton = searchBtns.length > 0;
 
         // 检测列表结构
-        const lists = doc.querySelectorAll('ul.list, ol.list, .list, .book-list, .novel-list, .chapter-list, .booklist, .novellist');
+        const listSelectors = [
+            '.book-list', '.novel-list', '.list', '.booklist', '.novellist',
+            'ul.list', 'ol.list', '.items', '.book-items',
+            '.recommend-list', '.hot-list', '.update-list', '.rank-list',
+            '.result-list', '.search-list', '.search-result'
+        ];
+        const lists = doc.querySelectorAll(listSelectors.join(','));
         patterns.hasList = lists.length > 0;
 
         // 检测分页
@@ -276,7 +249,7 @@ class BookSourceAnalyzer {
         const possibleContainers = doc.querySelectorAll('.book, .novel, .item, .card, .post, .article, li, tr');
         patterns.containerCount = possibleContainers.length;
 
-        // 检测图片（可能是封面）
+        // 检测图片
         const images = doc.querySelectorAll('img[src*="cover"], img[class*="cover"], img[class*="book"], img[class*="thumb"], img[class*="pic"]');
         patterns.hasCoverImages = images.length > 0;
 
@@ -297,18 +270,11 @@ class BookSourceAnalyzer {
 
         const html = doc.documentElement.outerHTML;
 
-        // 检测是否为通用小说站
         if (this.isNovelSite(doc, html)) {
             structure.type = 'novel-site';
             structure.confidence = 0.7;
-            
-            // 尝试检测搜索URL模式
             structure.searchUrl = this.detectSearchUrl(doc, baseUrl);
-            
-            // 尝试检测列表选择器
             structure.searchListSelector = this.detectListSelector(doc);
-            
-            // 尝试检测书籍URL模式
             structure.bookUrlPattern = this.detectBookUrlPattern(doc);
         }
 
@@ -338,44 +304,53 @@ class BookSourceAnalyzer {
     }
 
     /**
-     * 检测搜索URL
+     * 检测搜索URL - 改进版
      */
     detectSearchUrl(doc, baseUrl) {
         // 查找搜索表单
         const forms = doc.querySelectorAll('form');
         for (const form of forms) {
             const action = form.getAttribute('action');
-            const hasSearchInput = form.querySelector('input[type="text"], input[type="search"], input[name*="search"], input[id*="search"]');
+            const hasSearchInput = form.querySelector('input[type="text"], input[type="search"], input[name*="search"], input[id*="search"], input[name*="key"], input[name*="wd"], input[name*="keyword"]');
             
             if (hasSearchInput) {
                 let searchUrl = action || '';
                 if (searchUrl && !searchUrl.startsWith('http')) {
-                    searchUrl = new URL(searchUrl, baseUrl).href;
+                    try {
+                        searchUrl = new URL(searchUrl, baseUrl).href;
+                    } catch(e) {
+                        searchUrl = baseUrl + (searchUrl.startsWith('/') ? '' : '/') + searchUrl;
+                    }
                 }
-                return searchUrl || baseUrl;
+                const inputName = hasSearchInput.getAttribute('name') || hasSearchInput.getAttribute('id') || 'searchkey';
+                return (searchUrl || baseUrl) + (searchUrl && searchUrl.includes('?') ? '&' : '?') + inputName + '={{key}}';
             }
         }
 
         // 查找搜索链接
-        const searchLinks = doc.querySelectorAll('a[href*="search"], a[href*="so"], a[href*="find"], a[href*="query"]');
+        const searchLinks = doc.querySelectorAll('a[href*="search"], a[href*="so"], a[href*="find"], a[href*="query"], a[href*="sousuo"]');
         if (searchLinks.length > 0) {
             const href = searchLinks[0].getAttribute('href');
-            return new URL(href, baseUrl).href;
+            try {
+                const fullUrl = new URL(href, baseUrl).href;
+                return fullUrl + (fullUrl.includes('?') ? '&' : '?') + 'searchkey={{key}}';
+            } catch(e) {}
         }
 
-        return null;
+        // 默认搜索URL模式
+        return baseUrl + (baseUrl.endsWith('/') ? '' : '/') + 'search?searchkey={{key}}';
     }
 
     /**
-     * 检测列表选择器
+     * 检测列表选择器 - 改进版
      */
     detectListSelector(doc) {
-        // 尝试多种常见列表选择器
         const selectors = [
             '.book-list', '.novel-list', '.list', '.booklist', '.novellist',
             'ul.list', 'ol.list', '.items', '.book-items',
-            'table:has(a)', 'ul:has(a)', '.recommend-list',
-            '.hot-list', '.update-list', '.rank-list'
+            '.recommend-list', '.hot-list', '.update-list', '.rank-list',
+            '.result-list', '.search-list', '.search-result',
+            'table:has(a)', 'ul:has(a)'
         ];
 
         for (const selector of selectors) {
@@ -385,8 +360,8 @@ class BookSourceAnalyzer {
             }
         }
 
-        // 尝试自动检测：查找包含多个链接的容器
-        const containers = doc.querySelectorAll('ul, ol, .list, .items, .content, .main');
+        // 自动检测：查找包含多个链接的容器
+        const containers = doc.querySelectorAll('ul, ol, .list, .items, .content, .main, .section, .box');
         for (const container of containers) {
             const links = container.querySelectorAll('a');
             if (links.length >= 5 && links.length <= 100) {
@@ -408,12 +383,10 @@ class BookSourceAnalyzer {
             const href = link.getAttribute('href');
             if (!href || href.startsWith('javascript:') || href === '#') continue;
 
-            // 提取URL模式
             const normalized = href.replace(/\d+/g, '{id}');
             patterns.set(normalized, (patterns.get(normalized) || 0) + 1);
         }
 
-        // 找出最常见的模式
         let bestPattern = null;
         let bestCount = 0;
 
@@ -454,10 +427,112 @@ class BookSourceAnalyzer {
     }
 
     /**
-     * 生成Legado 3.0书源JSON
+     * 智能检测文本选择器 - 改进版
+     */
+    smartDetectSelector(doc, selectors, minElements = 1) {
+        for (const selector of selectors) {
+            try {
+                const elements = doc.querySelectorAll(selector);
+                if (elements.length >= minElements) {
+                    return selector;
+                }
+            } catch(e) {}
+        }
+        return null;
+    }
+
+    /**
+     * 生成Legado 3.0书源JSON - 改进版
      */
     generateBookSource(analysis, siteName) {
         const { doc, baseUrl, baseHost, title, links, commonPatterns, likelyStructure } = analysis;
+        
+        // 智能检测各个规则
+        const searchUrl = this.detectSearchUrl(doc, baseUrl);
+        const searchList = this.detectListSelector(doc);
+        
+        // 检测搜索列表中的书名选择器
+        const searchNameSelectors = [
+            'h2 a', 'h3 a', '.title a', '.name a', '.book-name a',
+            '.book-title a', '.novel-title a', '.s2 a', '.bookname a',
+            'a.bookname', 'a.title', '.info a', '.text a',
+            'li a', '.item a', 'td a', '.result-item a'
+        ];
+        const searchName = this.smartDetectSelector(doc, searchNameSelectors);
+        
+        // 检测搜索列表中的作者选择器
+        const searchAuthorSelectors = [
+            '.author', '.writer', '.info .author', '.book-author',
+            '.novel-author', '.s3', '.author a', '.by',
+            '.info span', '.book-info span', '.text .author'
+        ];
+        const searchAuthor = this.smartDetectSelector(doc, searchAuthorSelectors);
+        
+        // 检测搜索封面
+        const searchCoverSelectors = [
+            'img.cover', 'img[src*="cover"]', '.book-img img', '.pic img',
+            '.cover img', '.book-cover img', 'img[src*="book"]',
+            '.img img', '.image img', 'img.thumbnail'
+        ];
+        const searchCover = this.smartDetectSelector(doc, searchCoverSelectors);
+        
+        // 检测书名选择器
+        const bookNameSelectors = [
+            'h1', '.book-name', '.novel-name', '.info h1',
+            '.book-title', '.novel-title', '.name h1',
+            '.title h1', '.bookinfo h1', '.detail h1',
+            'h1.title', 'h1.name', '.content h1'
+        ];
+        const bookName = this.smartDetectSelector(doc, bookNameSelectors);
+        
+        // 检测作者选择器
+        const bookAuthorSelectors = [
+            '.author', '.writer', '.info .author', '.book-author',
+            '.novel-author', '.by', '.info span:first-child',
+            '.bookinfo .author', '.detail .author',
+            'span.author', 'p.author', '.info p'
+        ];
+        const bookAuthor = this.smartDetectSelector(doc, bookAuthorSelectors);
+        
+        // 检测封面选择器
+        const coverSelectors = [
+            '.cover img', '.book-cover img', '.pic img',
+            '.book-img img', '.img img', '.image img',
+            '#cover img', '.bookinfo img', '.detail img',
+            'img.cover', 'img[src*="cover"]'
+        ];
+        const coverUrl = this.smartDetectSelector(doc, coverSelectors);
+        
+        // 检测章节列表选择器
+        const chapterListSelectors = [
+            '.chapter-list', '.chapterlist', '.catalog', '.directory',
+            '#chapter-list', '#chapters', '.chapters', '.chapter-items',
+            'ul.chapter', 'ol.chapter', '.list-chapter',
+            '.chapter', '.chapter-list a', '.catalog a',
+            '#list', '.list', '.book-list', '.novel-list',
+            '.chapterlist a', '.chapter-list a',
+            'ul a', 'ol a', '.list a'
+        ];
+        const chapterList = this.smartDetectSelector(doc, chapterListSelectors);
+        
+        // 检测章节名称选择器
+        const chapterNameSelectors = [
+            'a', '.chapter-name', '.title', '.chapter-title',
+            '.catalog a', '.chapter a', 'li a'
+        ];
+        const chapterName = this.smartDetectSelector(doc, chapterNameSelectors);
+        
+        // 检测内容选择器
+        const contentSelectors = [
+            '#content', '.content', '.read-content', '.chapter-content',
+            '.text-content', '.article-content', '#chapter-content',
+            '.novel-content', '.book-content', '#book-content',
+            '.txt', '.read', '.chapter-text', '.text',
+            '#chaptercontent', '#chaptercontent', '.chaptercontent',
+            '#contenttext', '.contenttext', '.readtext',
+            'article', '.post', '.entry', '.main-content'
+        ];
+        const content = this.smartDetectSelector(doc, contentSelectors);
         
         // 构建书源
         const bookSource = {
@@ -466,22 +541,22 @@ class BookSourceAnalyzer {
             bookSourceType: 0,
             bookSourceGroup: "自动生成",
             loginUrl: null,
-            ruleSearchUrl: this.buildSearchRule(commonPatterns, baseUrl),
-            ruleSearchList: likelyStructure.searchListSelector || '',
-            ruleSearchName: this.detectTextSelector(doc, 'h2 a, h3 a, .title a, .name a, .book-name a'),
-            ruleSearchAuthor: this.detectTextSelector(doc, '.author, .writer, .info .author'),
-            ruleSearchCoverUrl: this.detectImageSelector(doc, 'img.cover, img[src*="cover"], .book-img img, .pic img'),
-            ruleSearchNoteUrl: '',
-            ruleBookUrlPattern: likelyStructure.bookUrlPattern || '',
-            ruleBookInfoInit: '',
-            ruleBookName: this.detectTextSelector(doc, 'h1, .book-name, .novel-name, .info h1'),
-            ruleBookAuthor: this.detectTextSelector(doc, '.author, .writer, .info .author'),
-            ruleCoverUrl: this.detectImageSelector(doc, '.cover img, .book-cover img, .pic img'),
-            ruleChapterUrl: this.detectChapterUrl(doc, baseUrl),
-            ruleChapterList: this.detectChapterListSelector(doc),
-            ruleChapterName: this.detectTextSelector(doc, 'a, .chapter-name, .title'),
-            ruleContentUrl: this.detectContentUrl(doc, baseUrl),
-            ruleContent: this.detectContentSelector(doc),
+            ruleSearchUrl: searchUrl || null,
+            ruleSearchList: searchList || null,
+            ruleSearchName: searchName || null,
+            ruleSearchAuthor: searchAuthor || null,
+            ruleSearchCoverUrl: searchCover ? searchCover + '@src' : null,
+            ruleSearchNoteUrl: null,
+            ruleBookUrlPattern: likelyStructure.bookUrlPattern || null,
+            ruleBookInfoInit: null,
+            ruleBookName: bookName || null,
+            ruleBookAuthor: bookAuthor || null,
+            ruleCoverUrl: coverUrl ? coverUrl + '@src' : null,
+            ruleChapterUrl: null,
+            ruleChapterList: chapterList || null,
+            ruleChapterName: chapterName || null,
+            ruleContentUrl: null,
+            ruleContent: content || null,
             ruleContentReplace: null,
             httpUserAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             weight: 0,
@@ -501,145 +576,6 @@ class BookSourceAnalyzer {
         }
 
         return bookSource;
-    }
-
-    /**
-     * 构建搜索规则
-     */
-    buildSearchRule(patterns, baseUrl) {
-        if (patterns.searchInput) {
-            const searchName = patterns.searchInput.name;
-            if (searchName) {
-                return baseUrl + (baseUrl.endsWith('/') ? '' : '/') + `search?${searchName}={{key}}`;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * 检测文本选择器
-     */
-    detectTextSelector(doc, preferredSelectors) {
-        const selectors = preferredSelectors.split(', ');
-        for (const selector of selectors) {
-            const elements = doc.querySelectorAll(selector);
-            if (elements.length > 0) {
-                return selector;
-            }
-        }
-        return '';
-    }
-
-    /**
-     * 检测图片选择器
-     */
-    detectImageSelector(doc, preferredSelectors) {
-        const selectors = preferredSelectors.split(', ');
-        for (const selector of selectors) {
-            const elements = doc.querySelectorAll(selector);
-            if (elements.length > 0) {
-                return selector + '@src';
-            }
-        }
-        return '';
-    }
-
-    /**
-     * 检测章节URL规则
-     */
-    detectChapterUrl(doc, baseUrl) {
-        const chapterLinks = doc.querySelectorAll('a[href*="chapter"], a[href*="read"], a[href*="content"]');
-        if (chapterLinks.length > 0) {
-            const href = chapterLinks[0].getAttribute('href');
-            if (href) {
-                try {
-                    const fullUrl = new URL(href, baseUrl).href;
-                    // 提取模式
-                    return fullUrl.replace(/\d+/g, '{{id}}');
-                } catch (e) {}
-            }
-        }
-        return '';
-    }
-
-    /**
-     * 检测章节列表选择器
-     */
-    detectChapterListSelector(doc) {
-        const selectors = [
-            '.chapter-list', '.chapterlist', '.catalog', '.directory',
-            '#chapter-list', '#chapters', '.chapters', '.chapter-items',
-            'ul.chapter', 'ol.chapter', '.list-chapter'
-        ];
-
-        for (const selector of selectors) {
-            const elements = doc.querySelectorAll(selector);
-            if (elements.length > 0) {
-                return selector;
-            }
-        }
-
-        // 自动检测：查找包含最多链接的容器
-        let bestContainer = null;
-        let maxLinks = 0;
-
-        const containers = doc.querySelectorAll('div, ul, ol, section');
-        for (const container of containers) {
-            const links = container.querySelectorAll('a');
-            if (links.length > maxLinks && links.length >= 5) {
-                maxLinks = links.length;
-                bestContainer = container;
-            }
-        }
-
-        if (bestContainer) {
-            return this.generateSelector(bestContainer) + ' a';
-        }
-
-        return '';
-    }
-
-    /**
-     * 检测内容页URL规则
-     */
-    detectContentUrl(doc, baseUrl) {
-        const contentLinks = doc.querySelectorAll('a[href*="read"], a[href*="content"], a[href*="chapter"]');
-        if (contentLinks.length > 0) {
-            const href = contentLinks[0].getAttribute('href');
-            if (href) {
-                try {
-                    const fullUrl = new URL(href, baseUrl).href;
-                    return fullUrl.replace(/\d+/g, '{{id}}');
-                } catch (e) {}
-            }
-        }
-        return '';
-    }
-
-    /**
-     * 检测内容选择器
-     */
-    detectContentSelector(doc) {
-        const selectors = [
-            '#content', '.content', '.read-content', '.chapter-content',
-            '.text-content', '.article-content', '#chapter-content',
-            '.novel-content', '.book-content', '#book-content'
-        ];
-
-        for (const selector of selectors) {
-            const elements = doc.querySelectorAll(selector);
-            if (elements.length > 0) {
-                return selector;
-            }
-        }
-
-        // 检测可能的内容容器
-        const possibleContent = doc.querySelectorAll('article, .post, .entry, .main-content');
-        if (possibleContent.length > 0) {
-            return this.generateSelector(possibleContent[0]);
-        }
-
-        return 'body';
     }
 
     /**

@@ -3,6 +3,7 @@
  */
 let analyzer = null;
 let currentResult = null;
+let lastExportedFileName = null;
 
 /**
  * 开始分析
@@ -16,10 +17,12 @@ async function startAnalysis() {
     const errorSection = document.getElementById('errorSection');
     const loadingText = document.getElementById('loadingText');
     const progressFill = document.getElementById('progressFill');
+    const filePathHint = document.getElementById('filePathHint');
 
     // 隐藏之前的结果和错误
     resultSection.classList.add('hidden');
     errorSection.classList.add('hidden');
+    filePathHint.classList.add('hidden');
     
     // 显示加载状态
     loadingSection.classList.remove('hidden');
@@ -102,11 +105,16 @@ function displayPreview(bookSource) {
     const fields = [
         { label: '书源名称', value: bookSource.bookSourceName },
         { label: '网站URL', value: bookSource.bookSourceUrl },
-        { label: '搜索规则', value: bookSource.ruleSearchUrl || '未检测到' },
+        { label: '搜索URL', value: bookSource.ruleSearchUrl || '未检测到' },
         { label: '搜索列表', value: bookSource.ruleSearchList || '未检测到' },
-        { label: '书名规则', value: bookSource.ruleSearchName || '未检测到' },
-        { label: '作者规则', value: bookSource.ruleSearchAuthor || '未检测到' },
+        { label: '搜索书名', value: bookSource.ruleSearchName || '未检测到' },
+        { label: '搜索作者', value: bookSource.ruleSearchAuthor || '未检测到' },
+        { label: '搜索封面', value: bookSource.ruleSearchCoverUrl || '未检测到' },
+        { label: '书名规则', value: bookSource.ruleBookName || '未检测到' },
+        { label: '作者规则', value: bookSource.ruleBookAuthor || '未检测到' },
+        { label: '封面规则', value: bookSource.ruleCoverUrl || '未检测到' },
         { label: '章节列表', value: bookSource.ruleChapterList || '未检测到' },
+        { label: '章节名称', value: bookSource.ruleChapterName || '未检测到' },
         { label: '内容规则', value: bookSource.ruleContent || '未检测到' }
     ];
 
@@ -207,13 +215,89 @@ function exportJson() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${currentResult.bookSource.bookSourceName || 'book-source'}.json`;
+    const fileName = `${currentResult.bookSource.bookSourceName || 'book-source'}.json`;
+    a.download = fileName;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
     
-    showToast('💾 文件已导出！');
+    lastExportedFileName = fileName;
+    
+    // 显示文件路径提示
+    const filePathHint = document.getElementById('filePathHint');
+    filePathHint.innerHTML = `💾 文件已导出：<strong>${fileName}</strong><br>📁 保存位置：浏览器下载文件夹（通常为 <em>Downloads</em> 或 <em>下载</em>）<br>💡 提示：在阅读App中导入此文件即可添加书源`;
+    filePathHint.classList.remove('hidden');
+    
+    showToast(`💾 已导出 ${fileName}`);
+}
+
+/**
+ * 一键导入阅读App
+ */
+function importToReader() {
+    if (!currentResult) return;
+
+    const jsonStr = JSON.stringify([currentResult.bookSource], null, 2);
+    const encoded = encodeURIComponent(jsonStr);
+    
+    // 尝试多种方式导入阅读App
+    const methods = [
+        // 方式1: legado:// 协议 (阅读3.0)
+        {
+            name: '阅读3.0',
+            url: `legado://import/bookSource?src=${encoded}`
+        },
+        // 方式2: 通过 intent 协议
+        {
+            name: 'Intent',
+            url: `intent://import/bookSource?src=${encoded}#Intent;scheme=legado;end`
+        }
+    ];
+
+    // 尝试打开阅读App
+    const method = methods[0];
+    
+    // 创建隐藏的iframe尝试打开
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = method.url;
+    document.body.appendChild(iframe);
+    
+    // 同时尝试直接打开
+    const link = document.createElement('a');
+    link.href = method.url;
+    link.style.display = 'none';
+    document.body.appendChild(link);
+    
+    // 尝试通过location跳转
+    const timeout = setTimeout(() => {
+        // 如果阅读App未安装，提供备用方案
+        showToast('📲 如果阅读App未打开，请手动导入JSON文件');
+        
+        // 显示详细说明
+        const filePathHint = document.getElementById('filePathHint');
+        filePathHint.innerHTML = `
+            <strong>📲 导入阅读App方法：</strong><br>
+            1️⃣ 先点击"导出JSON"下载书源文件<br>
+            2️⃣ 打开 <strong>阅读App</strong><br>
+            3️⃣ 进入 <strong>我的 → 书源管理</strong><br>
+            4️⃣ 点击右上角 <strong>三个点 → 导入</strong><br>
+            5️⃣ 选择刚才下载的JSON文件<br><br>
+            📍 文件位置：浏览器下载文件夹
+        `;
+        filePathHint.classList.remove('hidden');
+    }, 2000);
+
+    // 尝试打开
+    window.location.href = method.url;
+    
+    // 清理
+    setTimeout(() => {
+        document.body.removeChild(iframe);
+        document.body.removeChild(link);
+        clearTimeout(timeout);
+    }, 3000);
 }
 
 /**
@@ -233,6 +317,7 @@ function resetUI() {
     document.getElementById('errorSection').classList.add('hidden');
     document.getElementById('resultSection').classList.add('hidden');
     document.getElementById('loadingSection').classList.add('hidden');
+    document.getElementById('filePathHint').classList.add('hidden');
 }
 
 /**
@@ -245,20 +330,6 @@ function showToast(message) {
     const toast = document.createElement('div');
     toast.className = 'toast';
     toast.textContent = message;
-    toast.style.cssText = `
-        position: fixed;
-        bottom: 30px;
-        left: 50%;
-        transform: translateX(-50%);
-        background: #333;
-        color: white;
-        padding: 12px 24px;
-        border-radius: 8px;
-        font-size: 14px;
-        z-index: 1000;
-        animation: fadeInUp 0.3s ease;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-    `;
 
     document.body.appendChild(toast);
 
@@ -285,19 +356,3 @@ function escapeHtml(text) {
     div.textContent = text;
     return div.innerHTML;
 }
-
-// 添加toast动画
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes fadeInUp {
-        from {
-            opacity: 0;
-            transform: translateX(-50%) translateY(20px);
-        }
-        to {
-            opacity: 1;
-            transform: translateX(-50%) translateY(0);
-        }
-    }
-`;
-document.head.appendChild(style);
