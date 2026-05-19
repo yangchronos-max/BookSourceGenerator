@@ -2,6 +2,15 @@ plugins {
     id 'com.android.application'
 }
 
+// 构建前自动复制www目录到assets
+task copyWebAssets(type: Copy) {
+    from '../../www'
+    into 'src/main/assets/www'
+    include '**/*'
+}
+
+preBuild.dependsOn copyWebAssets
+
 android {
     namespace 'com.booksource.generator'
     compileSdk 34
