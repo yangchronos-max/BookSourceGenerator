@@ -188,9 +188,23 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public void openReaderApp(String jsonContent) {
             try {
-                // 使用legado协议直接导入书源
-                String encoded = Uri.encode(jsonContent);
-                String legadoUrl = "legado://import/bookSource?src=" + encoded;
+                // 先保存JSON文件到下载目录
+                String filename = "book_source_import.json";
+                File downloadsDir = Environment.getExternalStoragePublicDirectory(
+                    Environment.DIRECTORY_DOWNLOADS);
+                if (!downloadsDir.exists()) {
+                    downloadsDir.mkdirs();
+                }
+                File file = new File(downloadsDir, filename);
+                try (FileOutputStream fos = new FileOutputStream(file);
+                     OutputStreamWriter writer = new OutputStreamWriter(fos, StandardCharsets.UTF_8)) {
+                    writer.write(jsonContent);
+                    writer.flush();
+                }
+                
+                // 使用legado协议导入书源文件
+                String filePath = file.getAbsolutePath();
+                String legadoUrl = "legado://import/bookSource?src=file://" + Uri.encode(filePath);
                 
                 runOnUiThread(() -> {
                     try {

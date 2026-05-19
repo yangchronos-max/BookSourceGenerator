@@ -347,7 +347,6 @@ class BookSourceAnalyzer {
             '.info .author', '.book-info .author',
             '.detail .author', '.bookInfo .author',
             'span.author', 'p.author',
-            '.info span:contains(作者)',
             'meta[property="og:novel:author"]',
             'meta[property="book:author"]'
         ];
