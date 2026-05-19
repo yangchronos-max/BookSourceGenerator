@@ -215,7 +215,8 @@ async function copyResult() {
 function exportJson() {
     if (!currentResult) return;
 
-    const jsonStr = JSON.stringify(currentResult.bookSource, null, 2);
+    // 阅读App需要数组格式 [{...}]
+    const jsonStr = JSON.stringify([currentResult.bookSource], null, 2);
     const fileName = `${currentResult.bookSource.bookSourceName || 'book-source'}.json`;
     
     // 使用Android原生接口保存
@@ -256,7 +257,8 @@ function exportJson() {
 function importToReader() {
     if (!currentResult) return;
 
-    const jsonStr = JSON.stringify(currentResult.bookSource, null, 2);
+    // 阅读App需要数组格式 [{...}]
+    const jsonStr = JSON.stringify([currentResult.bookSource], null, 2);
     
     // 使用Android原生接口
     if (window.Android && window.Android.openReaderApp) {

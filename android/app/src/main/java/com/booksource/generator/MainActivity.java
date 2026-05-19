@@ -1,12 +1,10 @@
 package com.booksource.generator;
 
 import android.annotation.SuppressLint;
-import android.app.AlertDialog;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -69,17 +67,30 @@ public class MainActivity extends AppCompatActivity {
         // 添加JavaScript接口
         webView.addJavascriptInterface(new WebAppInterface(), "Android");
 
-        // WebViewClient
+        // WebViewClient - 关键：放行所有非http协议（如legado://）
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
                 
-                // 处理外部链接
+                // 放行legado协议（阅读App）
+                if (url.startsWith("legado://")) {
+                    try {
+                        Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(intent);
+                        return true;
+                    } catch (Exception e) {
+                        return false;
+                    }
+                }
+                
+                // http/https在WebView内加载
                 if (url.startsWith("http://") || url.startsWith("https://")) {
                     view.loadUrl(url);
                     return true;
                 }
+                
                 return false;
             }
 
@@ -188,23 +199,9 @@ public class MainActivity extends AppCompatActivity {
         @JavascriptInterface
         public void openReaderApp(String jsonContent) {
             try {
-                // 先保存JSON文件到下载目录
-                String filename = "book_source_import.json";
-                File downloadsDir = Environment.getExternalStoragePublicDirectory(
-                    Environment.DIRECTORY_DOWNLOADS);
-                if (!downloadsDir.exists()) {
-                    downloadsDir.mkdirs();
-                }
-                File file = new File(downloadsDir, filename);
-                try (FileOutputStream fos = new FileOutputStream(file);
-                     OutputStreamWriter writer = new OutputStreamWriter(fos, StandardCharsets.UTF_8)) {
-                    writer.write(jsonContent);
-                    writer.flush();
-                }
-                
-                // 使用legado协议导入书源文件
-                String filePath = file.getAbsolutePath();
-                String legadoUrl = "legado://import/bookSource?src=file://" + Uri.encode(filePath);
+                // 使用legado协议直接导入书源（URL编码JSON内容）
+                String encoded = Uri.encode(jsonContent);
+                String legadoUrl = "legado://import/bookSource?src=" + encoded;
                 
                 runOnUiThread(() -> {
                     try {
