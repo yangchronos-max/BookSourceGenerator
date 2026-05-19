@@ -1,6 +1,7 @@
 package com.booksource.generator;
 
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
@@ -79,7 +80,7 @@ public class BookSourceAnalyzer {
     /**
      * 生成书源 - 核心方法
      */
-    private JSONObject generateBookSource(String url, String name, Document doc) throws IOException {
+    private JSONObject generateBookSource(String url, String name, Document doc) throws IOException, JSONException {
         JSONObject bookSource = new JSONObject();
         String baseUrl = cleanUrl(url);
 
@@ -109,22 +110,21 @@ public class BookSourceAnalyzer {
         JSONObject contentRules = new JSONObject();
 
         try {
-            Log.d("BookSourceAnalyzer", "正在模拟搜索: " + testSearchUrl);
+            System.out.println("正在模拟搜索: " + testSearchUrl);
             Document searchDoc = fetchPage(testSearchUrl);
-            String searchHtml = searchDoc.html();
             
             // 分析搜索结果页结构
-            analyzeSearchPage(searchDoc, searchRules, bookInfoRules);
+            analyzeSearchPage(searchDoc, searchRules);
             
             // 如果搜索结果中有书籍，点击第一本分析详情页
             String firstBookUrl = findFirstBookUrl(searchDoc, baseUrl);
             if (firstBookUrl != null && !firstBookUrl.isEmpty()) {
-                Log.d("BookSourceAnalyzer", "正在分析详情页: " + firstBookUrl);
+                System.out.println("正在分析详情页: " + firstBookUrl);
                 Document bookDoc = fetchPage(firstBookUrl);
                 analyzeBookPage(bookDoc, bookInfoRules, tocRules, contentRules);
             }
         } catch (Exception e) {
-            Log.d("BookSourceAnalyzer", "搜索模拟失败，使用首页分析: " + e.getMessage());
+            System.out.println("搜索模拟失败，使用首页分析: " + e.getMessage());
             // 如果搜索失败，回退到首页分析
             analyzeHomePage(doc, searchRules, bookInfoRules, tocRules, contentRules);
         }
@@ -141,7 +141,7 @@ public class BookSourceAnalyzer {
     /**
      * 分析搜索结果页 - 智能检测列表容器和字段
      */
-    private void analyzeSearchPage(Document doc, JSONObject searchRules, JSONObject bookInfoRules) {
+    private void analyzeSearchPage(Document doc, JSONObject searchRules) throws JSONException {
         // 查找所有可能的列表容器
         Map<String, Integer> containerCandidates = new HashMap<>();
         
@@ -213,7 +213,7 @@ public class BookSourceAnalyzer {
     /**
      * 分析书籍详情页
      */
-    private void analyzeBookPage(Document doc, JSONObject bookInfoRules, JSONObject tocRules, JSONObject contentRules) {
+    private void analyzeBookPage(Document doc, JSONObject bookInfoRules, JSONObject tocRules, JSONObject contentRules) throws JSONException {
         // 书名
         Element metaName = doc.selectFirst("meta[property=og:novel:book_name], meta[property=og:title]");
         if (metaName != null) {
@@ -301,7 +301,7 @@ public class BookSourceAnalyzer {
     /**
      * 分析目录页
      */
-    private void analyzeTocPage(Document doc, JSONObject tocRules) {
+    private void analyzeTocPage(Document doc, JSONObject tocRules) throws JSONException {
         // 找章节列表
         String[] listSelectors = {
             "#list", ".list", ".chapter-list", ".chapters", ".chapterlist",
@@ -348,7 +348,7 @@ public class BookSourceAnalyzer {
     /**
      * 分析内容页
      */
-    private void analyzeContentPage(Document doc, JSONObject contentRules) {
+    private void analyzeContentPage(Document doc, JSONObject contentRules) throws JSONException {
         String[] contentSelectors = {
             "#content", ".content", ".bookcontent", ".chapter-content",
             "#bookcontent", "#chaptercontent", "#textcontent",
@@ -409,7 +409,7 @@ public class BookSourceAnalyzer {
      * 回退方案：从首页分析
      */
     private void analyzeHomePage(Document doc, JSONObject searchRules, JSONObject bookInfoRules, 
-                                  JSONObject tocRules, JSONObject contentRules) {
+                                  JSONObject tocRules, JSONObject contentRules) throws JSONException {
         // 搜索规则 - 通用默认值
         searchRules.put("bookList", "li, tr, .item, .book-item, .result-item");
         searchRules.put("name", "a");
@@ -503,12 +503,5 @@ public class BookSourceAnalyzer {
 
         // 默认搜索URL
         return cleanUrl(url) + "/search?keyword={{key}}";
-    }
-
-    // 简单的日志类
-    private static class Log {
-        static void d(String tag, String msg) {
-            System.out.println(tag + ": " + msg);
-        }
     }
 }
