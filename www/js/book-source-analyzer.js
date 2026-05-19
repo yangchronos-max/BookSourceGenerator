@@ -1,638 +1,517 @@
 /**
- * 书源分析引擎 - 自动分析小说网站结构并生成 Legado 3.0 书源
- * v2.0 - 改进版：更智能的规则检测
+ * 书源分析引擎 - 智能检测网站结构并生成书源规则
  */
 class BookSourceAnalyzer {
     constructor() {
-        this.proxyUrl = '';
-        this.analysisResult = null;
+        this.proxyUrl = 'https://api.allorigins.win/raw?url=';
+        this.proxyUrl2 = 'https://corsproxy.io/?';
+        this.proxyUrl3 = 'https://api.codetabs.com/v1/proxy?quest=';
     }
 
     /**
-     * 通过代理获取网页内容（绕过CORS限制）
+     * 分析网站并生成书源
      */
-    async fetchPage(url) {
-        const methods = [
-            () => this.fetchWithCorsProxy(url),
-            () => this.fetchWithDirect(url)
-        ];
-
-        for (const method of methods) {
-            try {
-                const result = await method();
-                if (result) return result;
-            } catch (e) {
-                console.warn('Fetch method failed:', e.message);
-            }
-        }
-        throw new Error('无法获取网页内容，请检查URL是否正确');
-    }
-
-    /**
-     * 使用CORS代理获取
-     */
-    async fetchWithCorsProxy(url) {
-        const proxies = [
-            `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-            `https://corsproxy.io/?${encodeURIComponent(url)}`,
-            `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`
-        ];
-
-        for (const proxy of proxies) {
-            try {
-                const response = await fetch(proxy, {
-                    signal: AbortSignal.timeout(10000)
-                });
-                if (response.ok) {
-                    const text = await response.text();
-                    if (text && text.length > 100) return text;
-                }
-            } catch (e) {
-                continue;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * 直接获取（适用于同源或CORS允许的站点）
-     */
-    async fetchWithDirect(url) {
-        const response = await fetch(url, {
-            signal: AbortSignal.timeout(8000),
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-            }
-        });
-        if (response.ok) {
-            return await response.text();
-        }
-        return null;
-    }
-
-    /**
-     * 解析HTML并分析网站结构
-     */
-    analyzeHTML(html, baseUrl) {
+    async analyze(url, siteName) {
+        // 获取网页内容
+        const html = await this.fetchPage(url);
+        
+        // 解析HTML
         const parser = new DOMParser();
         const doc = parser.parseFromString(html, 'text/html');
-        const baseHost = new URL(baseUrl).hostname;
-
+        
+        // 提取网站信息
+        const title = doc.querySelector('title')?.textContent || '';
+        const name = siteName || this.extractSiteName(url, title);
+        
+        // 生成书源
+        const bookSource = this.generateBookSource(url, name, doc, html);
+        
         return {
-            doc: doc,
-            baseUrl: baseUrl,
-            baseHost: baseHost,
-            title: doc.title,
-            meta: this.extractMeta(doc),
-            links: this.extractLinks(doc, baseUrl),
-            commonPatterns: this.detectCommonPatterns(doc),
-            likelyStructure: this.detectSiteStructure(doc, baseUrl)
+            bookSource,
+            detected: {
+                title,
+                name
+            }
         };
     }
 
     /**
-     * 提取页面元数据
+     * 获取网页内容（带重试）
      */
-    extractMeta(doc) {
-        const meta = {};
-        doc.querySelectorAll('meta').forEach(el => {
-            const name = el.getAttribute('name') || el.getAttribute('property') || '';
-            const content = el.getAttribute('content') || '';
-            if (name && content) meta[name.toLowerCase()] = content;
-        });
-        return meta;
-    }
+    async fetchPage(url, retries = 3) {
+        const proxies = [
+            url,
+            this.proxyUrl + encodeURIComponent(url),
+            this.proxyUrl2 + encodeURIComponent(url),
+            this.proxyUrl3 + encodeURIComponent(url)
+        ];
 
-    /**
-     * 提取所有链接并分类
-     */
-    extractLinks(doc, baseUrl) {
-        const links = {
-            internal: [],
-            external: [],
-            likelyNovel: [],
-            likelyChapter: [],
-            likelySearch: []
-        };
-
-        const baseHost = new URL(baseUrl).hostname;
-        const seenUrls = new Set();
-
-        doc.querySelectorAll('a[href]').forEach(el => {
-            let href = el.getAttribute('href');
-            if (!href || href.startsWith('javascript:') || href === '#') return;
-
-            try {
-                const fullUrl = new URL(href, baseUrl).href;
-                if (seenUrls.has(fullUrl)) return;
-                seenUrls.add(fullUrl);
-
-                const text = (el.textContent || '').trim().substring(0, 50);
-                const urlHost = new URL(fullUrl).hostname;
-
-                const linkInfo = { url: fullUrl, text, host: urlHost };
-
-                if (urlHost === baseHost) {
-                    links.internal.push(linkInfo);
-                    
-                    if (this.isLikelyNovelLink(fullUrl, text)) {
-                        links.likelyNovel.push(linkInfo);
+        for (let i = 0; i < proxies.length; i++) {
+            for (let attempt = 0; attempt < retries; attempt++) {
+                try {
+                    const response = await fetch(proxies[i], {
+                        signal: AbortSignal.timeout(15000)
+                    });
+                    if (response.ok) {
+                        return await response.text();
                     }
-                    
-                    if (this.isLikelyChapterLink(fullUrl, text)) {
-                        links.likelyChapter.push(linkInfo);
+                } catch (e) {
+                    if (attempt === retries - 1 && i === proxies.length - 1) {
+                        throw new Error(`无法获取网页内容: ${e.message}`);
                     }
-                } else {
-                    links.external.push(linkInfo);
+                    await new Promise(r => setTimeout(r, 1000));
                 }
-            } catch (e) {}
-        });
-
-        return links;
-    }
-
-    /**
-     * 检测是否可能是小说链接
-     */
-    isLikelyNovelLink(url, text) {
-        const urlLower = url.toLowerCase();
-        const textLower = text.toLowerCase();
-
-        const urlPatterns = [
-            /\/book\//i, /\/novel\//i, /\/info\//i, /\/detail\//i,
-            /\/read\//i, /\/story\//i, /bookinfo/i, /novelinfo/i,
-            /\/(\d+)\.html$/, /id=\d+/i, /bookid=/i
-        ];
-
-        for (const pattern of urlPatterns) {
-            if (pattern.test(urlLower)) return true;
-        }
-
-        const textPatterns = ['章', '节', '卷', '篇', '部', '集'];
-        for (const keyword of textPatterns) {
-            if (textLower.includes(keyword)) return true;
-        }
-
-        const idMatch = url.match(/\/(\d{4,})\//);
-        if (idMatch) return true;
-
-        return false;
-    }
-
-    /**
-     * 检测是否可能是章节链接
-     */
-    isLikelyChapterLink(url, text) {
-        const chapterPatterns = [
-            /\/chapter\//i, /\/read\//i, /\/content\//i,
-            /chapter_\d+/i, /read_\d+/i,
-            /(\d+)\.html$/,
-            /第[0-9一二三四五六七八九十百千万]+[章节卷篇部集]/
-        ];
-
-        for (const pattern of chapterPatterns) {
-            if (pattern.test(url) || pattern.test(text)) return true;
-        }
-        return false;
-    }
-
-    /**
-     * 检测常见网站模式
-     */
-    detectCommonPatterns(doc) {
-        const patterns = {};
-
-        // 检测导航菜单
-        const navs = doc.querySelectorAll('nav, .nav, .menu, #nav, #menu, .navigation, .navbar');
-        patterns.hasNavigation = navs.length > 0;
-
-        // 检测搜索框 - 更全面的检测
-        const searchSelectors = [
-            'input[type="text"]', 'input[type="search"]',
-            'input[name*="search"]', 'input[id*="search"]', 'input[class*="search"]',
-            'input[name*="key"]', 'input[id*="key"]', 'input[class*="key"]',
-            'input[name*="keyword"]', 'input[id*="keyword"]',
-            'input[name*="wd"]', 'input[name*="word"]',
-            'input[name*="q"]', 'input[name*="query"]',
-            'input[name*="s"]', 'input[name*="so"]'
-        ];
-        
-        const searchInputs = doc.querySelectorAll(searchSelectors.join(','));
-        patterns.hasSearch = searchInputs.length > 0;
-        if (searchInputs.length > 0) {
-            const input = searchInputs[0];
-            patterns.searchInput = {
-                selector: this.generateSelector(input),
-                name: input.getAttribute('name') || input.getAttribute('id') || 'searchkey'
-            };
-        }
-
-        // 检测搜索按钮
-        const searchBtns = doc.querySelectorAll('button[type="submit"], input[type="submit"]');
-        patterns.hasSearchButton = searchBtns.length > 0;
-
-        // 检测列表结构
-        const listSelectors = [
-            '.book-list', '.novel-list', '.list', '.booklist', '.novellist',
-            'ul.list', 'ol.list', '.items', '.book-items',
-            '.recommend-list', '.hot-list', '.update-list', '.rank-list',
-            '.result-list', '.search-list', '.search-result'
-        ];
-        const lists = doc.querySelectorAll(listSelectors.join(','));
-        patterns.hasList = lists.length > 0;
-
-        // 检测分页
-        const paginations = doc.querySelectorAll('.pagination, .page, .pages, #pages, .pager, .page-nav');
-        patterns.hasPagination = paginations.length > 0;
-
-        // 检测可能的小说列表容器
-        const possibleContainers = doc.querySelectorAll('.book, .novel, .item, .card, .post, .article, li, tr');
-        patterns.containerCount = possibleContainers.length;
-
-        // 检测图片
-        const images = doc.querySelectorAll('img[src*="cover"], img[class*="cover"], img[class*="book"], img[class*="thumb"], img[class*="pic"]');
-        patterns.hasCoverImages = images.length > 0;
-
-        return patterns;
-    }
-
-    /**
-     * 检测网站结构类型
-     */
-    detectSiteStructure(doc, baseUrl) {
-        const structure = {
-            type: 'unknown',
-            searchUrl: null,
-            searchListSelector: null,
-            bookUrlPattern: null,
-            confidence: 0
-        };
-
-        const html = doc.documentElement.outerHTML;
-
-        if (this.isNovelSite(doc, html)) {
-            structure.type = 'novel-site';
-            structure.confidence = 0.7;
-            structure.searchUrl = this.detectSearchUrl(doc, baseUrl);
-            structure.searchListSelector = this.detectListSelector(doc);
-            structure.bookUrlPattern = this.detectBookUrlPattern(doc);
-        }
-
-        return structure;
-    }
-
-    /**
-     * 判断是否为小说网站
-     */
-    isNovelSite(doc, html) {
-        const novelIndicators = [
-            '小说', 'novel', 'book', '阅读', 'read', '章节', 'chapter',
-            '作者', 'author', '连载', '完本', '玄幻', '修真', '都市',
-            '言情', '穿越', '重生', '武侠', '奇幻'
-        ];
-
-        let score = 0;
-        const text = (doc.title + ' ' + html).toLowerCase();
-
-        for (const indicator of novelIndicators) {
-            if (text.includes(indicator.toLowerCase())) {
-                score++;
             }
         }
-
-        return score >= 3;
+        throw new Error('所有代理都失败了');
     }
 
     /**
-     * 检测搜索URL - 改进版
+     * 提取网站名称
      */
-    detectSearchUrl(doc, baseUrl) {
-        // 查找搜索表单
-        const forms = doc.querySelectorAll('form');
-        for (const form of forms) {
-            const action = form.getAttribute('action');
-            const hasSearchInput = form.querySelector('input[type="text"], input[type="search"], input[name*="search"], input[id*="search"], input[name*="key"], input[name*="wd"], input[name*="keyword"]');
-            
-            if (hasSearchInput) {
-                let searchUrl = action || '';
-                if (searchUrl && !searchUrl.startsWith('http')) {
-                    try {
-                        searchUrl = new URL(searchUrl, baseUrl).href;
-                    } catch(e) {
-                        searchUrl = baseUrl + (searchUrl.startsWith('/') ? '' : '/') + searchUrl;
-                    }
-                }
-                const inputName = hasSearchInput.getAttribute('name') || hasSearchInput.getAttribute('id') || 'searchkey';
-                return (searchUrl || baseUrl) + (searchUrl && searchUrl.includes('?') ? '&' : '?') + inputName + '={{key}}';
-            }
+    extractSiteName(url, title) {
+        // 从标题提取
+        if (title) {
+            const clean = title.replace(/[-_|].*$/, '').trim();
+            if (clean.length > 0 && clean.length < 50) return clean;
         }
-
-        // 查找搜索链接
-        const searchLinks = doc.querySelectorAll('a[href*="search"], a[href*="so"], a[href*="find"], a[href*="query"], a[href*="sousuo"]');
-        if (searchLinks.length > 0) {
-            const href = searchLinks[0].getAttribute('href');
-            try {
-                const fullUrl = new URL(href, baseUrl).href;
-                return fullUrl + (fullUrl.includes('?') ? '&' : '?') + 'searchkey={{key}}';
-            } catch(e) {}
+        
+        // 从URL提取
+        try {
+            const hostname = new URL(url).hostname;
+            const parts = hostname.replace('www.', '').split('.');
+            return parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
+        } catch {
+            return '未知网站';
         }
-
-        // 默认搜索URL模式
-        return baseUrl + (baseUrl.endsWith('/') ? '' : '/') + 'search?searchkey={{key}}';
     }
 
     /**
-     * 检测列表选择器 - 改进版
+     * 生成书源规则
      */
-    detectListSelector(doc) {
-        const selectors = [
-            '.book-list', '.novel-list', '.list', '.booklist', '.novellist',
-            'ul.list', 'ol.list', '.items', '.book-items',
-            '.recommend-list', '.hot-list', '.update-list', '.rank-list',
-            '.result-list', '.search-list', '.search-result',
-            'table:has(a)', 'ul:has(a)'
-        ];
-
-        for (const selector of selectors) {
-            const elements = doc.querySelectorAll(selector);
-            if (elements.length > 0 && elements.length < 50) {
-                return selector;
-            }
-        }
-
-        // 自动检测：查找包含多个链接的容器
-        const containers = doc.querySelectorAll('ul, ol, .list, .items, .content, .main, .section, .box');
-        for (const container of containers) {
-            const links = container.querySelectorAll('a');
-            if (links.length >= 5 && links.length <= 100) {
-                return this.generateSelector(container);
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * 检测书籍URL模式
-     */
-    detectBookUrlPattern(doc) {
-        const links = doc.querySelectorAll('a[href]');
-        const patterns = new Map();
-
-        for (const link of links) {
-            const href = link.getAttribute('href');
-            if (!href || href.startsWith('javascript:') || href === '#') continue;
-
-            const normalized = href.replace(/\d+/g, '{id}');
-            patterns.set(normalized, (patterns.get(normalized) || 0) + 1);
-        }
-
-        let bestPattern = null;
-        let bestCount = 0;
-
-        for (const [pattern, count] of patterns) {
-            if (count > bestCount && count >= 3) {
-                bestPattern = pattern;
-                bestCount = count;
-            }
-        }
-
-        return bestPattern;
-    }
-
-    /**
-     * 生成CSS选择器
-     */
-    generateSelector(element) {
-        if (element.id) {
-            return '#' + element.id;
-        }
-
-        if (element.className && typeof element.className === 'string') {
-            const classes = element.className.trim().split(/\s+/).filter(c => c);
-            if (classes.length > 0) {
-                return '.' + classes.join('.');
-            }
-        }
-
-        const tag = element.tagName.toLowerCase();
-        const parent = element.parentElement;
-        if (parent) {
-            const siblings = Array.from(parent.children).filter(c => c.tagName === element.tagName);
-            const index = siblings.indexOf(element) + 1;
-            return `${this.generateSelector(parent)} > ${tag}:nth-child(${index})`;
-        }
-
-        return tag;
-    }
-
-    /**
-     * 智能检测文本选择器 - 改进版
-     */
-    smartDetectSelector(doc, selectors, minElements = 1) {
-        for (const selector of selectors) {
-            try {
-                const elements = doc.querySelectorAll(selector);
-                if (elements.length >= minElements) {
-                    return selector;
-                }
-            } catch(e) {}
-        }
-        return null;
-    }
-
-    /**
-     * 生成Legado 3.0书源JSON - 改进版
-     */
-    generateBookSource(analysis, siteName) {
-        const { doc, baseUrl, baseHost, title, links, commonPatterns, likelyStructure } = analysis;
-        
-        // 智能检测各个规则
-        const searchUrl = this.detectSearchUrl(doc, baseUrl);
-        const searchList = this.detectListSelector(doc);
-        
-        // 检测搜索列表中的书名选择器
-        const searchNameSelectors = [
-            'h2 a', 'h3 a', '.title a', '.name a', '.book-name a',
-            '.book-title a', '.novel-title a', '.s2 a', '.bookname a',
-            'a.bookname', 'a.title', '.info a', '.text a',
-            'li a', '.item a', 'td a', '.result-item a'
-        ];
-        const searchName = this.smartDetectSelector(doc, searchNameSelectors);
-        
-        // 检测搜索列表中的作者选择器
-        const searchAuthorSelectors = [
-            '.author', '.writer', '.info .author', '.book-author',
-            '.novel-author', '.s3', '.author a', '.by',
-            '.info span', '.book-info span', '.text .author'
-        ];
-        const searchAuthor = this.smartDetectSelector(doc, searchAuthorSelectors);
-        
-        // 检测搜索封面
-        const searchCoverSelectors = [
-            'img.cover', 'img[src*="cover"]', '.book-img img', '.pic img',
-            '.cover img', '.book-cover img', 'img[src*="book"]',
-            '.img img', '.image img', 'img.thumbnail'
-        ];
-        const searchCover = this.smartDetectSelector(doc, searchCoverSelectors);
-        
-        // 检测书名选择器
-        const bookNameSelectors = [
-            'h1', '.book-name', '.novel-name', '.info h1',
-            '.book-title', '.novel-title', '.name h1',
-            '.title h1', '.bookinfo h1', '.detail h1',
-            'h1.title', 'h1.name', '.content h1'
-        ];
-        const bookName = this.smartDetectSelector(doc, bookNameSelectors);
-        
-        // 检测作者选择器
-        const bookAuthorSelectors = [
-            '.author', '.writer', '.info .author', '.book-author',
-            '.novel-author', '.by', '.info span:first-child',
-            '.bookinfo .author', '.detail .author',
-            'span.author', 'p.author', '.info p'
-        ];
-        const bookAuthor = this.smartDetectSelector(doc, bookAuthorSelectors);
-        
-        // 检测封面选择器
-        const coverSelectors = [
-            '.cover img', '.book-cover img', '.pic img',
-            '.book-img img', '.img img', '.image img',
-            '#cover img', '.bookinfo img', '.detail img',
-            'img.cover', 'img[src*="cover"]'
-        ];
-        const coverUrl = this.smartDetectSelector(doc, coverSelectors);
-        
-        // 检测章节列表选择器
-        const chapterListSelectors = [
-            '.chapter-list', '.chapterlist', '.catalog', '.directory',
-            '#chapter-list', '#chapters', '.chapters', '.chapter-items',
-            'ul.chapter', 'ol.chapter', '.list-chapter',
-            '.chapter', '.chapter-list a', '.catalog a',
-            '#list', '.list', '.book-list', '.novel-list',
-            '.chapterlist a', '.chapter-list a',
-            'ul a', 'ol a', '.list a'
-        ];
-        const chapterList = this.smartDetectSelector(doc, chapterListSelectors);
-        
-        // 检测章节名称选择器
-        const chapterNameSelectors = [
-            'a', '.chapter-name', '.title', '.chapter-title',
-            '.catalog a', '.chapter a', 'li a'
-        ];
-        const chapterName = this.smartDetectSelector(doc, chapterNameSelectors);
-        
-        // 检测内容选择器
-        const contentSelectors = [
-            '#content', '.content', '.read-content', '.chapter-content',
-            '.text-content', '.article-content', '#chapter-content',
-            '.novel-content', '.book-content', '#book-content',
-            '.txt', '.read', '.chapter-text', '.text',
-            '#chaptercontent', '#chaptercontent', '.chaptercontent',
-            '#contenttext', '.contenttext', '.readtext',
-            'article', '.post', '.entry', '.main-content'
-        ];
-        const content = this.smartDetectSelector(doc, contentSelectors);
-        
-        // 构建书源
+    generateBookSource(url, name, doc, html) {
         const bookSource = {
-            bookSourceUrl: baseUrl,
-            bookSourceName: siteName || title || baseHost,
-            bookSourceType: 0,
             bookSourceGroup: "自动生成",
-            loginUrl: null,
-            ruleSearchUrl: searchUrl || null,
-            ruleSearchList: searchList || null,
-            ruleSearchName: searchName || null,
-            ruleSearchAuthor: searchAuthor || null,
-            ruleSearchCoverUrl: searchCover ? searchCover + '@src' : null,
-            ruleSearchNoteUrl: null,
-            ruleBookUrlPattern: likelyStructure.bookUrlPattern || null,
-            ruleBookInfoInit: null,
-            ruleBookName: bookName || null,
-            ruleBookAuthor: bookAuthor || null,
-            ruleCoverUrl: coverUrl ? coverUrl + '@src' : null,
-            ruleChapterUrl: null,
-            ruleChapterList: chapterList || null,
-            ruleChapterName: chapterName || null,
-            ruleContentUrl: null,
-            ruleContent: content || null,
+            bookSourceName: name,
+            bookSourceUrl: this.cleanUrl(url),
+            bookSourceType: 0,
+            bookSourceComment: "由书源生成器自动生成",
+            header: JSON.stringify({
+                "User-Agent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+            }),
+            loginUrl: "",
+            loginUi: "",
+            loginCheckJs: "",
+            bookUrlPattern: "",
+            searchUrl: this.detectSearchUrl(url, doc),
+            ruleSearchUrl: this.detectSearchUrl(url, doc),
+            ruleSearchList: this.detectSearchList(doc),
+            ruleSearchName: this.detectSearchName(doc),
+            ruleSearchAuthor: this.detectSearchAuthor(doc),
+            ruleSearchCoverUrl: this.detectSearchCover(doc),
+            ruleSearchNoteUrl: "",
+            ruleSearchKind: "",
+            ruleSearchIntroduce: "",
+            ruleBookName: this.detectBookName(doc),
+            ruleBookAuthor: this.detectBookAuthor(doc),
+            ruleCoverUrl: this.detectCover(doc),
+            ruleBookKind: "",
+            ruleBookIntroduce: this.detectIntroduce(doc),
+            ruleChapterList: this.detectChapterList(doc),
+            ruleChapterName: this.detectChapterName(doc),
+            ruleChapterUrl: this.detectChapterUrl(doc),
+            ruleContent: this.detectContent(doc),
+            ruleContentUrl: "",
+            ruleIntroduce: "",
             ruleContentReplace: null,
-            httpUserAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            weight: 0,
-            customOrder: 0,
-            enabled: true,
-            enabledExplore: true,
-            explore: [],
-            searchable: 1,
-            variable: null
+            ruleSearchFields: null,
+            ruleBookInfoInit: "",
+            ruleChapterListInit: "",
+            ruleContentInit: "",
+            ruleContentUpdate: "",
+            httpUserAgent: "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+            weight: 0
         };
 
         // 清理空值
-        for (const key in bookSource) {
-            if (bookSource[key] === '' || bookSource[key] === null) {
+        Object.keys(bookSource).forEach(key => {
+            if (bookSource[key] === null || bookSource[key] === undefined || bookSource[key] === '') {
                 delete bookSource[key];
             }
-        }
+        });
 
         return bookSource;
     }
 
     /**
-     * 主分析流程
+     * 清理URL
      */
-    async analyze(url, siteName) {
-        if (!url) {
-            throw new Error('请输入小说网站URL');
-        }
-
-        // 规范化URL
-        if (!url.startsWith('http://') && !url.startsWith('https://')) {
-            url = 'https://' + url;
-        }
-
-        // 验证URL
+    cleanUrl(url) {
         try {
-            new URL(url);
-        } catch (e) {
-            throw new Error('请输入有效的URL地址');
+            const u = new URL(url);
+            return `${u.protocol}//${u.hostname}`;
+        } catch {
+            return url;
         }
-
-        // 获取网页内容
-        const html = await this.fetchPage(url);
-        if (!html || html.length < 50) {
-            throw new Error('无法获取网页内容，请检查URL或网络连接');
-        }
-
-        // 分析HTML
-        const analysis = this.analyzeHTML(html, url);
-
-        // 生成书源
-        const bookSource = this.generateBookSource(analysis, siteName);
-
-        this.analysisResult = {
-            url: url,
-            siteName: siteName || analysis.title,
-            analysis: analysis,
-            bookSource: bookSource
-        };
-
-        return this.analysisResult;
     }
 
     /**
-     * 导出书源JSON字符串
+     * 检测搜索URL
      */
-    exportJSON() {
-        if (!this.analysisResult) return null;
-        return JSON.stringify(this.analysisResult.bookSource, null, 2);
+    detectSearchUrl(url, doc) {
+        // 查找搜索表单
+        const forms = doc.querySelectorAll('form');
+        for (const form of forms) {
+            const action = form.getAttribute('action') || '';
+            const inputs = form.querySelectorAll('input[type="text"], input[type="search"], input[name*="search"], input[name*="key"], input[name*="word"], input[name*="q"], input[name*="s"]');
+            if (inputs.length > 0) {
+                let searchUrl = action;
+                if (!searchUrl.startsWith('http')) {
+                    searchUrl = this.cleanUrl(url) + (searchUrl.startsWith('/') ? '' : '/') + searchUrl;
+                }
+                const input = inputs[0];
+                const name = input.getAttribute('name') || 'searchkey';
+                return searchUrl + (searchUrl.includes('?') ? '&' : '?') + name + '={{key}}';
+            }
+        }
+
+        // 查找搜索链接
+        const searchLinks = doc.querySelectorAll('a[href*="search"], a[href*="s?key"], a[href*="so?key"]');
+        for (const link of searchLinks) {
+            const href = link.getAttribute('href') || '';
+            if (href.includes('key=') || href.includes('word=') || href.includes('q=') || href.includes('s=')) {
+                return this.cleanUrl(url) + '/' + href.replace(/^\//, '').replace(/key=[^&]*/, 'key={{key}}').replace(/word=[^&]*/, 'word={{key}}').replace(/q=[^&]*/, 'q={{key}}').replace(/s=[^&]*/, 's={{key}}');
+            }
+        }
+
+        // 常见搜索URL模式
+        const baseUrl = this.cleanUrl(url);
+        const patterns = [
+            `${baseUrl}/search?keyword={{key}}`,
+            `${baseUrl}/search?key={{key}}`,
+            `${baseUrl}/search?q={{key}}`,
+            `${baseUrl}/search?w={{key}}`,
+            `${baseUrl}/search?searchkey={{key}}`,
+            `${baseUrl}/search.html?keyword={{key}}`,
+            `${baseUrl}/s?q={{key}}`,
+            `${baseUrl}/s?wd={{key}}`,
+            `${baseUrl}/s?key={{key}}`,
+            `${baseUrl}/so?key={{key}}`,
+            `${baseUrl}/so?keyword={{key}}`,
+            `${baseUrl}/book/search?keyword={{key}}`,
+            `${baseUrl}/modules/article/search.php?searchkey={{key}}`,
+            `${baseUrl}/modules/article/search.php?key={{key}}`
+        ];
+
+        // 返回第一个匹配的常见模式
+        return patterns[0];
     }
 
     /**
-     * 导出为Legado导入格式（数组包裹）
+     * 检测搜索列表选择器
      */
-    exportLegadoFormat() {
-        if (!this.analysisResult) return null;
-        return JSON.stringify([this.analysisResult.bookSource], null, 2);
+    detectSearchList(doc) {
+        const selectors = [
+            // 通用列表
+            '.search-list', '.search_result', '.result-list', '.book-list',
+            '.list', '.booklist', '.book_list', '.books-list',
+            'ul.list', 'ul.book-list', 'ul.books-list',
+            'table.list', 'table.grid',
+            // 小说网站常见
+            '#list', '#booklist', '#search-list', '#search_result',
+            '.novelslist', '.novels-list', '.novels_list',
+            '.s-list', '.s_result', '.so-list',
+            // 通用
+            'ul li', 'table tr', '.item', '.result-item',
+            // 最通用
+            'ul', 'table'
+        ];
+
+        for (const selector of selectors) {
+            const elements = doc.querySelectorAll(selector);
+            if (elements.length >= 2) {
+                return selector;
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * 检测搜索书名选择器
+     */
+    detectSearchName(doc) {
+        const selectors = [
+            'h3 a', 'h4 a', 'h2 a',
+            '.bookname a', '.book-name a', '.name a',
+            '.title a', '.book_title a',
+            'a[title]', 'a[href*="book"]',
+            'td:first-child a', 'td a',
+            'li a', 'a'
+        ];
+
+        for (const selector of selectors) {
+            const elements = doc.querySelectorAll(selector);
+            if (elements.length >= 2) {
+                return selector;
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * 检测搜索作者选择器
+     */
+    detectSearchAuthor(doc) {
+        const selectors = [
+            '.author', '.bookauthor', '.book-author',
+            'td.author', 'td:nth-child(2)',
+            '.info .author', '.book-info .author',
+            'span.author', 'p.author',
+            '.byline', '.writer',
+            'td:nth-child(3)', 'td:nth-child(4)'
+        ];
+
+        for (const selector of selectors) {
+            const elements = doc.querySelectorAll(selector);
+            if (elements.length >= 2) {
+                return selector;
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * 检测搜索封面选择器
+     */
+    detectSearchCover(doc) {
+        const selectors = [
+            'img.cover', 'img.bookcover', 'img.book-cover',
+            '.cover img', '.bookcover img', '.book-cover img',
+            'td img', 'li img', '.item img',
+            'img[src*="cover"]', 'img[src*="book"]',
+            'img:first-child'
+        ];
+
+        for (const selector of selectors) {
+            const elements = doc.querySelectorAll(selector);
+            if (elements.length >= 2) {
+                return selector + '@src';
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * 检测书名选择器
+     */
+    detectBookName(doc) {
+        const selectors = [
+            // 常见书名位置
+            '.bookname', '.book-name', '.book_name',
+            '.booktitle', '.book-title', '.book_title',
+            '.name', '.title', '.bookInfo .name',
+            '.book-info .name', '.bookInfo .title',
+            'h1', 'h2.bookname', 'h1.bookname',
+            '.detail h1', '.detail h2',
+            // 通用
+            'h1:first-of-type', 'h2:first-of-type',
+            '.info h1', '.info h2',
+            'meta[property="og:novel:book_name"]',
+            'meta[property="og:title"]'
+        ];
+
+        for (const selector of selectors) {
+            const element = doc.querySelector(selector);
+            if (element) {
+                if (selector.startsWith('meta')) {
+                    return selector + '@content';
+                }
+                return selector;
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * 检测作者选择器
+     */
+    detectBookAuthor(doc) {
+        const selectors = [
+            '.author', '.bookauthor', '.book-author',
+            '.writer', '.byline',
+            '.info .author', '.book-info .author',
+            '.detail .author', '.bookInfo .author',
+            'span.author', 'p.author',
+            '.info span:contains(作者)',
+            'meta[property="og:novel:author"]',
+            'meta[property="book:author"]'
+        ];
+
+        for (const selector of selectors) {
+            const element = doc.querySelector(selector);
+            if (element) {
+                if (selector.startsWith('meta')) {
+                    return selector + '@content';
+                }
+                return selector;
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * 检测封面选择器
+     */
+    detectCover(doc) {
+        const selectors = [
+            '.cover img', '.bookcover img', '.book-cover img',
+            '.bookimg img', '.book-img img', '.pic img',
+            '.detail .cover img', '.bookInfo .cover img',
+            'img.cover', 'img.bookcover',
+            'meta[property="og:image"]',
+            'link[rel="image_src"]'
+        ];
+
+        for (const selector of selectors) {
+            const element = doc.querySelector(selector);
+            if (element) {
+                if (selector.startsWith('meta')) {
+                    return selector + '@content';
+                }
+                if (selector.startsWith('link')) {
+                    return selector + '@href';
+                }
+                return selector + '@src';
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * 检测简介选择器
+     */
+    detectIntroduce(doc) {
+        const selectors = [
+            '.intro', '.introduce', '.description',
+            '.desc', '.bookdesc', '.book-desc',
+            '.summary', '.book-summary',
+            '.info .intro', '.book-info .intro',
+            '.detail .intro', '.bookInfo .intro',
+            '#intro', '#description',
+            'meta[property="og:description"]',
+            'meta[name="description"]'
+        ];
+
+        for (const selector of selectors) {
+            const element = doc.querySelector(selector);
+            if (element) {
+                if (selector.startsWith('meta')) {
+                    return selector + '@content';
+                }
+                return selector;
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * 检测章节列表选择器
+     */
+    detectChapterList(doc) {
+        const selectors = [
+            '#list', '.list', '.chapter-list', '.chapters',
+            '.chapterlist', '.chapter_list', '.catalog',
+            '.directory', '.index', '.book-list',
+            '#chapters', '#chapter-list', '#catalog',
+            'ul.chapter', 'ul.chapters', 'ul.list',
+            '.book .list', '.book-list ul',
+            // 通用
+            'ul', 'ol', 'table',
+            'div[class*="list"]', 'div[class*="chapter"]',
+            'div[id*="list"]', 'div[id*="chapter"]'
+        ];
+
+        for (const selector of selectors) {
+            const elements = doc.querySelectorAll(selector);
+            if (elements.length >= 2) {
+                return selector + ' li';
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * 检测章节名称选择器
+     */
+    detectChapterName(doc) {
+        const selectors = [
+            'li a', 'li span', 'td a',
+            'a[href*="html"]', 'a[href*="chapter"]',
+            'a[href*="/"]', 'a'
+        ];
+
+        for (const selector of selectors) {
+            const elements = doc.querySelectorAll(selector);
+            if (elements.length >= 2) {
+                return selector;
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * 检测章节URL选择器
+     */
+    detectChapterUrl(doc) {
+        const selectors = [
+            'li a', 'td a',
+            'a[href*="html"]', 'a[href*="chapter"]',
+            'a[href*="/"]', 'a'
+        ];
+
+        for (const selector of selectors) {
+            const elements = doc.querySelectorAll(selector);
+            if (elements.length >= 2) {
+                return selector + '@href';
+            }
+        }
+
+        return '';
+    }
+
+    /**
+     * 检测内容选择器
+     */
+    detectContent(doc) {
+        const selectors = [
+            '#content', '.content', '.bookcontent', '.book-content',
+            '.text', '.article', '.chapter-content',
+            '#bookcontent', '#chaptercontent', '#textcontent',
+            '.read-content', '.novel-content', '.txt',
+            'article', 'main',
+            'div[class*="content"]', 'div[id*="content"]',
+            'div[class*="text"]', 'div[id*="text"]',
+            'div[class*="chapter"]', 'div[id*="chapter"]',
+            'p'
+        ];
+
+        for (const selector of selectors) {
+            const element = doc.querySelector(selector);
+            if (element) {
+                return selector;
+            }
+        }
+
+        return '';
     }
 }

@@ -6,11 +6,11 @@ import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
-import android.print.PrintAttributes;
 import android.view.KeyEvent;
 import android.view.View;
 import android.webkit.JavascriptInterface;
@@ -24,7 +24,6 @@ import android.widget.ProgressBar;
 import android.widget.Toast;
 
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -35,7 +34,6 @@ public class MainActivity extends AppCompatActivity {
 
     private WebView webView;
     private ProgressBar progressBar;
-    private SwipeRefreshLayout swipeRefreshLayout;
     private ValueCallback<Uri[]> filePathCallback;
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -46,7 +44,6 @@ public class MainActivity extends AppCompatActivity {
 
         webView = findViewById(R.id.webView);
         progressBar = findViewById(R.id.progressBar);
-        swipeRefreshLayout = findViewById(R.id.swipeRefreshLayout);
 
         // WebView配置
         WebSettings settings = webView.getSettings();
@@ -80,7 +77,6 @@ public class MainActivity extends AppCompatActivity {
                 
                 // 处理外部链接
                 if (url.startsWith("http://") || url.startsWith("https://")) {
-                    // 在WebView中加载
                     view.loadUrl(url);
                     return true;
                 }
@@ -90,7 +86,6 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
-                swipeRefreshLayout.setRefreshing(false);
                 progressBar.setVisibility(View.GONE);
             }
         });
@@ -115,11 +110,6 @@ public class MainActivity extends AppCompatActivity {
                 startActivityForResult(intent, 100);
                 return true;
             }
-        });
-
-        // 下拉刷新
-        swipeRefreshLayout.setOnRefreshListener(() -> {
-            webView.reload();
         });
 
         // 加载本地HTML
@@ -174,7 +164,7 @@ public class MainActivity extends AppCompatActivity {
         }
 
         @JavascriptInterface
-        public void saveJsonFile(String filename, String content) {
+        public String saveJsonFile(String filename, String content) {
             try {
                 File downloadsDir = Environment.getExternalStoragePublicDirectory(
                     Environment.DIRECTORY_DOWNLOADS);
@@ -189,22 +179,72 @@ public class MainActivity extends AppCompatActivity {
                     writer.flush();
                 }
                 
-                String finalPath = file.getAbsolutePath();
-                runOnUiThread(() -> 
-                    Toast.makeText(MainActivity.this, 
-                        "已保存到: " + finalPath, Toast.LENGTH_LONG).show()
-                );
+                return file.getAbsolutePath();
             } catch (Exception e) {
-                runOnUiThread(() -> 
-                    Toast.makeText(MainActivity.this, 
-                        "保存失败: " + e.getMessage(), Toast.LENGTH_LONG).show()
-                );
+                return "保存失败: " + e.getMessage();
+            }
+        }
+
+        @JavascriptInterface
+        public void openReaderApp(String jsonContent) {
+            try {
+                // 先保存JSON文件
+                String filename = "book_source_import.json";
+                File downloadsDir = Environment.getExternalStoragePublicDirectory(
+                    Environment.DIRECTORY_DOWNLOADS);
+                if (!downloadsDir.exists()) {
+                    downloadsDir.mkdirs();
+                }
+                File file = new File(downloadsDir, filename);
+                try (FileOutputStream fos = new FileOutputStream(file);
+                     OutputStreamWriter writer = new OutputStreamWriter(fos, StandardCharsets.UTF_8)) {
+                    writer.write(jsonContent);
+                    writer.flush();
+                }
+
+                // 尝试打开阅读App
+                String finalPath = file.getAbsolutePath();
+                runOnUiThread(() -> {
+                    try {
+                        // 方式1: legado协议
+                        Intent intent = new Intent(Intent.ACTION_VIEW);
+                        intent.setData(Uri.parse("legado://"));
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(intent);
+                    } catch (Exception e1) {
+                        try {
+                            // 方式2: 通过包名打开
+                            Intent launchIntent = getPackageManager().getLaunchIntentForPackage("com.gedoor.monkeybook");
+                            if (launchIntent != null) {
+                                startActivity(launchIntent);
+                            } else {
+                                launchIntent = getPackageManager().getLaunchIntentForPackage("com.gedoor.monkeybook.debug");
+                                if (launchIntent != null) {
+                                    startActivity(launchIntent);
+                                } else {
+                                    showToast("未检测到阅读App，请手动导入");
+                                }
+                            }
+                        } catch (Exception e2) {
+                            showToast("未检测到阅读App，请手动导入");
+                        }
+                    }
+                });
+            } catch (Exception e) {
+                showToast("操作失败: " + e.getMessage());
             }
         }
 
         @JavascriptInterface
         public String getAppVersion() {
             return "1.0.0";
+        }
+
+        @JavascriptInterface
+        public String getDownloadPath() {
+            File downloadsDir = Environment.getExternalStoragePublicDirectory(
+                Environment.DIRECTORY_DOWNLOADS);
+            return downloadsDir.getAbsolutePath();
         }
     }
 }

@@ -190,10 +190,15 @@ function regenerateFromRules() {
 async function copyResult() {
     const jsonText = document.getElementById('resultJson').textContent;
     try {
+        // 尝试使用Android原生接口
+        if (window.Android && window.Android.copyToClipboard) {
+            window.Android.copyToClipboard(jsonText);
+            showToast('📋 已复制到剪贴板！');
+            return;
+        }
         await navigator.clipboard.writeText(jsonText);
         showToast('📋 已复制到剪贴板！');
     } catch (err) {
-        // 备用方案
         const textarea = document.createElement('textarea');
         textarea.value = jsonText;
         document.body.appendChild(textarea);
@@ -205,99 +210,67 @@ async function copyResult() {
 }
 
 /**
- * 导出JSON文件
+ * 导出JSON文件 - 使用Android原生保存
  */
 function exportJson() {
     if (!currentResult) return;
 
     const jsonStr = JSON.stringify([currentResult.bookSource], null, 2);
-    const blob = new Blob([jsonStr], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
     const fileName = `${currentResult.bookSource.bookSourceName || 'book-source'}.json`;
-    a.download = fileName;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
     
-    lastExportedFileName = fileName;
-    
-    // 显示文件路径提示
-    const filePathHint = document.getElementById('filePathHint');
-    filePathHint.innerHTML = `💾 文件已导出：<strong>${fileName}</strong><br>📁 保存位置：浏览器下载文件夹（通常为 <em>Downloads</em> 或 <em>下载</em>）<br>💡 提示：在阅读App中导入此文件即可添加书源`;
-    filePathHint.classList.remove('hidden');
-    
-    showToast(`💾 已导出 ${fileName}`);
+    // 使用Android原生接口保存
+    if (window.Android && window.Android.saveJsonFile) {
+        const result = window.Android.saveJsonFile(fileName, jsonStr);
+        lastExportedFileName = fileName;
+        
+        // 显示真实文件路径
+        const filePathHint = document.getElementById('filePathHint');
+        const downloadPath = window.Android.getDownloadPath ? window.Android.getDownloadPath() : '下载文件夹';
+        filePathHint.innerHTML = `
+            💾 文件已导出：<strong>${fileName}</strong><br>
+            📁 保存位置：<strong>${downloadPath}</strong><br>
+            💡 提示：用文件管理器打开此目录，找到文件后分享到阅读App即可导入
+        `;
+        filePathHint.classList.remove('hidden');
+        
+        showToast(`💾 已保存到 ${downloadPath}`);
+    } else {
+        // 浏览器备用方案
+        const blob = new Blob([jsonStr], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        showToast(`💾 已导出 ${fileName}`);
+    }
 }
 
 /**
- * 一键导入阅读App
+ * 一键导入阅读App - 使用Android原生打开
  */
 function importToReader() {
     if (!currentResult) return;
 
     const jsonStr = JSON.stringify([currentResult.bookSource], null, 2);
-    const encoded = encodeURIComponent(jsonStr);
     
-    // 尝试多种方式导入阅读App
-    const methods = [
-        // 方式1: legado:// 协议 (阅读3.0)
-        {
-            name: '阅读3.0',
-            url: `legado://import/bookSource?src=${encoded}`
-        },
-        // 方式2: 通过 intent 协议
-        {
-            name: 'Intent',
-            url: `intent://import/bookSource?src=${encoded}#Intent;scheme=legado;end`
-        }
-    ];
-
-    // 尝试打开阅读App
-    const method = methods[0];
-    
-    // 创建隐藏的iframe尝试打开
-    const iframe = document.createElement('iframe');
-    iframe.style.display = 'none';
-    iframe.src = method.url;
-    document.body.appendChild(iframe);
-    
-    // 同时尝试直接打开
-    const link = document.createElement('a');
-    link.href = method.url;
-    link.style.display = 'none';
-    document.body.appendChild(link);
-    
-    // 尝试通过location跳转
-    const timeout = setTimeout(() => {
-        // 如果阅读App未安装，提供备用方案
-        showToast('📲 如果阅读App未打开，请手动导入JSON文件');
-        
-        // 显示详细说明
-        const filePathHint = document.getElementById('filePathHint');
-        filePathHint.innerHTML = `
-            <strong>📲 导入阅读App方法：</strong><br>
-            1️⃣ 先点击"导出JSON"下载书源文件<br>
-            2️⃣ 打开 <strong>阅读App</strong><br>
-            3️⃣ 进入 <strong>我的 → 书源管理</strong><br>
-            4️⃣ 点击右上角 <strong>三个点 → 导入</strong><br>
-            5️⃣ 选择刚才下载的JSON文件<br><br>
-            📍 文件位置：浏览器下载文件夹
-        `;
-        filePathHint.classList.remove('hidden');
-    }, 2000);
-
-    // 尝试打开
-    window.location.href = method.url;
-    
-    // 清理
-    setTimeout(() => {
-        document.body.removeChild(iframe);
-        document.body.removeChild(link);
-        clearTimeout(timeout);
-    }, 3000);
+    // 使用Android原生接口打开阅读App
+    if (window.Android && window.Android.openReaderApp) {
+        window.Android.openReaderApp(jsonStr);
+        showToast('📲 正在打开阅读App...');
+    } else {
+        // 浏览器备用方案
+        const encoded = encodeURIComponent(jsonStr);
+        const timeout = setTimeout(() => {
+            showToast('📲 如果阅读App未打开，请先导出JSON再手动导入');
+        }, 2000);
+        window.location.href = `legado://import/bookSource?src=${encoded}`;
+        setTimeout(() => clearTimeout(timeout), 3000);
+    }
 }
 
 /**
@@ -324,6 +297,12 @@ function resetUI() {
  * 显示Toast提示
  */
 function showToast(message) {
+    // 优先使用Android原生Toast
+    if (window.Android && window.Android.showToast) {
+        window.Android.showToast(message);
+        return;
+    }
+    
     const existing = document.querySelector('.toast');
     if (existing) existing.remove();
 
