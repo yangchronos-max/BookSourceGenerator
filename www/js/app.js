@@ -152,6 +152,21 @@ function displayPreview(bookSource) {
             <div class="value">${escapeHtml(field.value)}</div>
         </div>
     `).join('');
+
+    // 添加书源格式说明
+    const formatNote = document.createElement('div');
+    formatNote.className = 'format-note';
+    formatNote.innerHTML = `
+        <p>📖 <strong>阅读App书源格式说明：</strong></p>
+        <ul>
+            <li><code>searchUrl</code> - 搜索URL，用 <code>{{key}}</code> 代替关键词</li>
+            <li><code>ruleSearch.bookUrl</code> - <strong>关键！</strong>搜索结果中每本书的详情页链接</li>
+            <li><code>ruleBookInfo.tocUrl</code> - 目录页链接（如果详情页和目录页不同）</li>
+            <li><code>ruleToc.chapterUrl</code> - 章节链接，用 <code>@href</code> 获取URL</li>
+        </ul>
+        <p>💡 如果搜索无结果，请检查 <code>ruleSearch.bookList</code> 和 <code>ruleSearch.bookUrl</code></p>
+    `;
+    preview.appendChild(formatNote);
 }
 
 /**

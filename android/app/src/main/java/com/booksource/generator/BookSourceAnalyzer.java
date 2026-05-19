@@ -8,6 +8,7 @@ import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
 
 import java.io.IOException;
+import java.net.URLEncoder;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -15,13 +16,12 @@ import java.util.Map;
  * 书源分析引擎 - Android原生实现
  * 使用Jsoup解析HTML，生成符合阅读App（legado）格式的书源JSON
  * 
- * 阅读App书源格式规范：
- * - ruleSearch: { bookList, name, author, coverUrl, bookUrl, intro, kind, lastChapter, wordCount }
- * - ruleBookInfo: { name, author, coverUrl, kind, intro, bookUrl, wordCount, lastChapter }
- * - ruleToc: { chapterList, chapterName, chapterUrl, isVolume, updateTime }
- * - ruleContent: { content, nextContentUrl, webJs, sourceRegex, replaceRegex }
- * - searchUrl: 搜索URL字符串
- * - exploreUrl: 发现URL字符串
+ * 阅读App书源格式（从源码BookSource.kt/BookListRule.kt/BookInfoRule.kt/TocRule.kt/ContentRule.kt提取）：
+ * 
+ * ruleSearch (BookListRule): { bookList, name, author, coverUrl, bookUrl, intro, kind, lastChapter, updateTime, wordCount }
+ * ruleBookInfo (BookInfoRule): { init, name, author, intro, kind, lastChapter, updateTime, coverUrl, tocUrl, wordCount, canReName, downloadUrls }
+ * ruleToc (TocRule): { preUpdateJs, chapterList, chapterName, chapterUrl, formatJs, isVolume, isVip, isPay, updateTime, nextTocUrl }
+ * ruleContent (ContentRule): { content, title, nextContentUrl, webJs, sourceRegex, replaceRegex, imageStyle, imageDecode, payAction }
  */
 public class BookSourceAnalyzer {
 
@@ -116,35 +116,40 @@ public class BookSourceAnalyzer {
             bookSource.put("httpUserAgent", USER_AGENT);
             bookSource.put("enabled", true);
             bookSource.put("enabledExplore", true);
+            bookSource.put("enabledCookieJar", true);
+            bookSource.put("concurrentRate", "1");
 
-            // 搜索URL
+            // 搜索URL - 使用{{key}}占位符（阅读App标准）
             String searchUrl = detectSearchUrl(url, doc);
             if (searchUrl != null && !searchUrl.isEmpty()) {
                 bookSource.put("searchUrl", searchUrl);
             }
 
-            // ruleSearch - 搜索规则（嵌套对象）
+            // ruleSearch - 搜索规则（BookListRule）
             JSONObject ruleSearch = new JSONObject();
             putIfNotEmpty(ruleSearch, "bookList", detectSearchList(doc));
             putIfNotEmpty(ruleSearch, "name", detectSearchName(doc));
             putIfNotEmpty(ruleSearch, "author", detectSearchAuthor(doc));
             putIfNotEmpty(ruleSearch, "coverUrl", detectSearchCover(doc));
+            putIfNotEmpty(ruleSearch, "bookUrl", detectSearchBookUrl(doc));
             if (ruleSearch.length() > 0) {
                 bookSource.put("ruleSearch", ruleSearch);
             }
 
-            // ruleBookInfo - 书籍信息规则（嵌套对象）
+            // ruleBookInfo - 书籍信息规则（BookInfoRule）
             JSONObject ruleBookInfo = new JSONObject();
             putIfNotEmpty(ruleBookInfo, "name", detectBookName(doc));
             putIfNotEmpty(ruleBookInfo, "author", detectBookAuthor(doc));
             putIfNotEmpty(ruleBookInfo, "coverUrl", detectCover(doc));
             putIfNotEmpty(ruleBookInfo, "kind", detectBookKind(doc));
             putIfNotEmpty(ruleBookInfo, "intro", detectIntroduce(doc));
+            putIfNotEmpty(ruleBookInfo, "tocUrl", detectTocUrl(doc));
+            putIfNotEmpty(ruleBookInfo, "lastChapter", detectLastChapter(doc));
             if (ruleBookInfo.length() > 0) {
                 bookSource.put("ruleBookInfo", ruleBookInfo);
             }
 
-            // ruleToc - 目录规则（嵌套对象）
+            // ruleToc - 目录规则（TocRule）
             JSONObject ruleToc = new JSONObject();
             putIfNotEmpty(ruleToc, "chapterList", detectChapterList(doc));
             putIfNotEmpty(ruleToc, "chapterName", detectChapterName(doc));
@@ -153,9 +158,10 @@ public class BookSourceAnalyzer {
                 bookSource.put("ruleToc", ruleToc);
             }
 
-            // ruleContent - 内容规则（嵌套对象）
+            // ruleContent - 内容规则（ContentRule）
             JSONObject ruleContent = new JSONObject();
             putIfNotEmpty(ruleContent, "content", detectContent(doc));
+            putIfNotEmpty(ruleContent, "nextContentUrl", detectNextContentUrl(doc));
             if (ruleContent.length() > 0) {
                 bookSource.put("ruleContent", ruleContent);
             }
@@ -178,7 +184,7 @@ public class BookSourceAnalyzer {
     }
 
     /**
-     * 检测搜索URL
+     * 检测搜索URL - 阅读App使用{{key}}作为搜索关键词占位符
      */
     private String detectSearchUrl(String url, Document doc) {
         // 查找搜索表单
@@ -186,11 +192,13 @@ public class BookSourceAnalyzer {
         for (Element form : forms) {
             String action = form.attr("action");
             Elements inputs = form.select("input[type=text], input[type=search], " +
-                    "input[name*=search], input[name*=key], input[name*=word], input[name*=q], input[name*=s]");
+                    "input[name*=search], input[name*=key], input[name*=word], input[name*=q], input[name*=s], " +
+                    "input[name*=kw], input[name*=wd]");
             if (!inputs.isEmpty()) {
                 String searchUrl = action;
                 if (!searchUrl.startsWith("http")) {
-                    searchUrl = cleanUrl(url) + (searchUrl.startsWith("/") ? "" : "/") + searchUrl;
+                    String base = cleanUrl(url);
+                    searchUrl = base + (searchUrl.startsWith("/") ? "" : "/") + searchUrl;
                 }
                 String name = inputs.first().attr("name");
                 if (name.isEmpty()) name = "searchkey";
@@ -199,16 +207,23 @@ public class BookSourceAnalyzer {
         }
 
         // 查找搜索链接
-        Elements searchLinks = doc.select("a[href*=search], a[href*=s?key], a[href*=so?key]");
+        Elements searchLinks = doc.select("a[href*=search], a[href*=so], a[href*=s?]");
         for (Element link : searchLinks) {
             String href = link.attr("href");
-            if (href.contains("key=") || href.contains("word=") || href.contains("q=") || href.contains("s=")) {
+            if (href.contains("key=") || href.contains("word=") || href.contains("q=") || 
+                href.contains("s=") || href.contains("kw=") || href.contains("wd=") || href.contains("search=")) {
                 String base = cleanUrl(url);
                 href = href.replaceAll("key=[^&]*", "key={{key}}")
                         .replaceAll("word=[^&]*", "word={{key}}")
                         .replaceAll("q=[^&]*", "q={{key}}")
-                        .replaceAll("s=[^&]*", "s={{key}}");
-                return base + "/" + href.replaceAll("^/", "");
+                        .replaceAll("s=[^&]*", "s={{key}}")
+                        .replaceAll("kw=[^&]*", "kw={{key}}")
+                        .replaceAll("wd=[^&]*", "wd={{key}}")
+                        .replaceAll("search=[^&]*", "search={{key}}");
+                if (!href.startsWith("http")) {
+                    return base + "/" + href.replaceAll("^/", "");
+                }
+                return href;
             }
         }
 
@@ -217,7 +232,7 @@ public class BookSourceAnalyzer {
     }
 
     /**
-     * 检测搜索列表选择器
+     * 检测搜索列表选择器 - 每本书的容器
      */
     private String detectSearchList(Document doc) {
         String[] selectors = {
@@ -226,7 +241,8 @@ public class BookSourceAnalyzer {
             "ul.list", "ul.book-list",
             "#list", "#booklist", "#search-list", "#search_result",
             ".novelslist", ".novels-list", ".s-list", ".s_result",
-            ".item", ".result-item"
+            ".item", ".result-item", ".book-item",
+            "li", "tr", ".search-item"
         };
 
         for (String selector : selectors) {
@@ -249,7 +265,8 @@ public class BookSourceAnalyzer {
             ".title a", ".book_title a",
             "a[title]", "a[href*=book]",
             "td:first-child a", "td a",
-            "li a"
+            "li a", ".book-item a",
+            "a"
         };
 
         for (String selector : selectors) {
@@ -272,7 +289,8 @@ public class BookSourceAnalyzer {
             ".info .author", ".book-info .author",
             "span.author", "p.author",
             ".byline", ".writer",
-            "td:nth-child(3)", "td:nth-child(4)"
+            "td:nth-child(3)", "td:nth-child(4)",
+            ".book-item .author"
         };
 
         for (String selector : selectors) {
@@ -293,7 +311,8 @@ public class BookSourceAnalyzer {
             "img.cover", "img.bookcover",
             ".cover img", ".bookcover img",
             "td img", "li img", ".item img",
-            "img[src*=cover]", "img[src*=book]"
+            "img[src*=cover]", "img[src*=book]",
+            ".book-item img"
         };
 
         for (String selector : selectors) {
@@ -307,11 +326,35 @@ public class BookSourceAnalyzer {
     }
 
     /**
+     * 检测搜索书籍URL选择器 - 关键！阅读App需要这个才能跳转到详情页
+     */
+    private String detectSearchBookUrl(Document doc) {
+        String[] selectors = {
+            "h3 a", "h4 a", "h2 a",
+            ".bookname a", ".book-name a", ".name a",
+            ".title a", ".book_title a",
+            "a[title]", "a[href*=book]",
+            "td:first-child a", "td a",
+            "li a", ".book-item a",
+            "a"
+        };
+
+        for (String selector : selectors) {
+            Elements elements = doc.select(selector);
+            if (elements.size() >= 2) {
+                return selector + "@href";
+            }
+        }
+
+        return "";
+    }
+
+    /**
      * 检测书名选择器
      */
     private String detectBookName(Document doc) {
         // 先检查meta标签
-        Element meta = doc.selectFirst("meta[property=og:novel:book_name], meta[property=og:title]");
+        Element meta = doc.selectFirst("meta[property=og:novel:book_name], meta[property=og:title], meta[property=og:novel:book_name]");
         if (meta != null) {
             return "meta[property=\"" + meta.attr("property") + "\"]@content";
         }
@@ -449,6 +492,47 @@ public class BookSourceAnalyzer {
     }
 
     /**
+     * 检测目录URL选择器
+     */
+    private String detectTocUrl(Document doc) {
+        // 查找"目录"或"章节目录"链接
+        Elements tocLinks = doc.select("a:contains(目录), a:contains(章节目录), a:contains(全部章节), " +
+                "a:contains(章节列表), a[href*=chapter], a[href*=catalog], a[href*=directory]");
+        for (Element link : tocLinks) {
+            String href = link.attr("href");
+            if (!href.isEmpty()) {
+                return "a:contains(" + link.text().trim() + ")@href";
+            }
+        }
+
+        return "";
+    }
+
+    /**
+     * 检测最新章节选择器
+     */
+    private String detectLastChapter(Document doc) {
+        String[] selectors = {
+            ".last", ".lastchapter", ".last-chapter",
+            ".newest", ".newchapter", ".new-chapter",
+            ".info .last", ".book-info .last",
+            "meta[property=og:novel:latest_chapter_name]"
+        };
+
+        for (String selector : selectors) {
+            Element element = doc.selectFirst(selector);
+            if (element != null) {
+                if (selector.startsWith("meta")) {
+                    return selector + "@content";
+                }
+                return selector;
+            }
+        }
+
+        return "";
+    }
+
+    /**
      * 检测章节列表选择器
      */
     private String detectChapterList(Document doc) {
@@ -550,6 +634,26 @@ public class BookSourceAnalyzer {
             Element element = doc.selectFirst(selector);
             if (element != null) {
                 return selector;
+            }
+        }
+
+        return "";
+    }
+
+    /**
+     * 检测下一页内容URL选择器
+     */
+    private String detectNextContentUrl(Document doc) {
+        String[] selectors = {
+            "a:contains(下一页)", "a:contains(下一章)",
+            "a.next", "a.next-chapter", "a#next",
+            "a[rel=next]", "a[href*=next]"
+        };
+
+        for (String selector : selectors) {
+            Element element = doc.selectFirst(selector);
+            if (element != null) {
+                return selector + "@href";
             }
         }
 
