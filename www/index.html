@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>书源生成器</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="apple-touch-icon" href="icons/icon-192.png">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📚 书源自动生成器</h1>
+            <p class="subtitle">粘贴小说网站URL，自动生成 Legado 3.0 书源</p>
+        </header>
+
+        <div class="input-section">
+            <div class="input-group">
+                <label for="siteUrl">小说网站URL</label>
+                <input type="url" id="siteUrl" placeholder="例如: https://www.example.com" />
+            </div>
+            <div class="input-group">
+                <label for="siteName">网站名称（可选）</label>
+                <input type="text" id="siteName" placeholder="自动识别或手动输入" />
+            </div>
+            <button id="analyzeBtn" onclick="startAnalysis()">
+                <span class="btn-icon">🔍</span>
+                开始分析
+            </button>
+        </div>
+
+        <div id="loadingSection" class="loading-section hidden">
+            <div class="spinner"></div>
+            <p id="loadingText">正在分析网站结构...</p>
+            <div class="progress-bar">
+                <div id="progressFill" class="progress-fill"></div>
+            </div>
+        </div>
+
+        <div id="resultSection" class="result-section hidden">
+            <div class="result-header">
+                <h2>📋 生成的书源</h2>
+                <div class="result-actions">
+                    <button onclick="copyResult()" class="btn-small">📋 复制</button>
+                    <button onclick="exportJson()" class="btn-small">💾 导出JSON</button>
+                </div>
+            </div>
+            <pre id="resultJson" class="result-json"></pre>
+            
+            <div class="preview-section">
+                <h3>🔍 书源预览</h3>
+                <div id="sourcePreview" class="source-preview"></div>
+            </div>
+
+            <div class="manual-edit-section">
+                <h3>✏️ 手动调整规则</h3>
+                <p class="hint">如果自动生成的规则不准确，可以手动修改以下规则：</p>
+                <div id="ruleEditor" class="rule-editor"></div>
+                <button onclick="regenerateFromRules()" class="btn-secondary">🔄 重新生成</button>
+            </div>
+        </div>
+
+        <div id="errorSection" class="error-section hidden">
+            <div class="error-icon">⚠️</div>
+            <p id="errorText"></p>
+            <button onclick="resetUI()" class="btn-secondary">重试</button>
+        </div>
+    </div>
+
+    <script src="js/book-source-analyzer.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

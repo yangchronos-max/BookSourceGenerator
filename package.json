@@ -1,0 +1,11 @@
+{
+  "name": "book-source-generator",
+  "version": "1.0.0",
+  "description": "小说书源自动生成器 - 粘贴网址自动生成Legado 3.0书源",
+  "main": "index.js",
+  "scripts": {
+    "build": "echo 'Building...'"
+  },
+  "author": "",
+  "license": "MIT"
+}
