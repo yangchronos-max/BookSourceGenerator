@@ -1,13 +1,29 @@
 /**
  * 书源分析引擎 v3.0 - 智能检测网站结构并生成阅读App兼容书源
  * 
- * 输出格式兼容阅读App v3.x 的嵌套JSON格式：
+ * 参考项目：
+ * - https://github.com/xy9144/auto_source_generator (Python版)
+ * - 阅读App官方讨论: https://github.com/gedoor/legado/discussions/5765
+ * 
+ * 输出格式兼容阅读App v3.x 标准格式：
  * {
+ *   "searchUrl": "URL,{'method':'POST','body':'key={{key}}'}",
  *   "ruleSearch": { "bookList": "...", "name": "...", ... },
  *   "ruleBookInfo": { "name": "...", "author": "...", ... },
  *   "ruleToc": { "chapterList": "...", "chapterName": "...", ... },
  *   "ruleContent": { "content": "..." }
  * }
+ * 
+ * 核心规则（来自教程和auto_source_generator）：
+ * 1. POST搜索格式: URL,{'method':'POST','body':'key={{key}}'}
+ *    - 单引号格式（教程写法）
+ *    - 双引号格式也支持: URL,{"method":"POST","body":"key={{key}}"}
+ * 2. GET搜索格式: URL?key={{key}}
+ * 3. 解析规则支持: CSS选择器 / XPath(@XPath:) / JSONPath / JS(<js></js>)
+ * 4. 文本替换: ##regex##新内容
+ * 5. WebView加载: URL##$##,{"webView":true}
+ * 6. 发现规则: 分类名称::路径
+ * 7. 章节倒序: 规则前加"-"前缀
  */
 class BookSourceAnalyzer {
     constructor() {
@@ -34,7 +50,7 @@ class BookSourceAnalyzer {
         // 检测搜索功能
         const searchInfo = this.detectSearch(url, doc, html);
         
-        // 生成书源（新版嵌套格式）
+        // 生成书源（标准格式）
         const bookSource = this.generateBookSource(url, name, doc, html, searchInfo);
         
         return {
@@ -102,6 +118,9 @@ class BookSourceAnalyzer {
     /**
      * 检测搜索功能
      * 返回 { url, hasForm, inputName, isPost, postBody }
+     * 
+     * 参考 auto_source_generator.py 的 analyze_search_function 方法
+     * 和 _build_yuedu_search_url 方法
      */
     detectSearch(url, doc, html) {
         const baseUrl = this.cleanUrl(url);
@@ -113,7 +132,7 @@ class BookSourceAnalyzer {
             postBody: ''
         };
 
-        // 1. 查找搜索表单
+        // 1. 查找搜索表单（参考 auto_source_generator 的 FormFinder）
         const forms = doc.querySelectorAll('form');
         for (const form of forms) {
             const action = (form.getAttribute('action') || '').trim();
@@ -126,8 +145,8 @@ class BookSourceAnalyzer {
                 const id = (input.id || '').toLowerCase();
                 const inputType = input.getAttribute('type') || 'text';
                 
-                // 判断是否是搜索输入框
-                const isSearch = /search|key|keyword|word|query|q|s|so|book|novel|小说|搜索/.test(name + placeholder + id);
+                // 判断是否是搜索输入框（参考 auto_source_generator 的判断逻辑）
+                const isSearch = /search|key|keyword|word|query|q|s|so|book|novel|小说|搜索|keyboard|searchkey|searchword|wd/.test(name + placeholder + id);
                 if (isSearch && name) {
                     let searchUrl = action;
                     
@@ -145,12 +164,23 @@ class BookSourceAnalyzer {
                         searchUrl = window.location.href || baseUrl;
                     }
                     
+                    // 收集隐藏参数（参考 auto_source_generator 的 hidden_params）
+                    const hiddenParams = {};
+                    const hiddenInputs = form.querySelectorAll('input[type="hidden"][name]');
+                    for (const hi of hiddenInputs) {
+                        const hn = hi.getAttribute('name');
+                        const hv = hi.getAttribute('value') || '';
+                        if (hn) hiddenParams[hn] = hv;
+                    }
+                    
                     if (method === 'post') {
-                        // POST请求：使用阅读App的POST搜索格式
-                        // 格式：URL,{'method':'POST','body':'key={{key}}'}
-                        // 注意：必须使用单引号，阅读App只识别单引号格式
+                        // POST请求：构建阅读App POST搜索格式
+                        // 参考 auto_source_generator._build_yuedu_search_url()
+                        // 格式1（教程写法，单引号）: URL,{'method':'POST','body':'key={{key}}'}
+                        // 格式2（auto_source_generator写法，双引号）: URL,{"method":"POST","body":"key={{key}}"}
+                        // 阅读App两种格式都支持
                         
-                        // 收集所有表单字段
+                        // 构建body参数（参考 auto_source_generator）
                         let bodyParts = [];
                         const allInputs = form.querySelectorAll('input[name]');
                         for (const fi of allInputs) {
@@ -166,16 +196,21 @@ class BookSourceAnalyzer {
                         }
                         const body = bodyParts.join('&');
                         
-                        // 阅读App POST搜索格式（必须用单引号）
+                        // 使用单引号格式（教程推荐写法）
                         result.url = searchUrl + ",{'method':'POST','body':'" + body + "'}";
                         result.hasForm = true;
                         result.inputName = name;
                         result.isPost = true;
                         result.postBody = body;
                     } else {
-                        // GET请求：添加查询参数
+                        // GET请求：添加查询参数（参考 auto_source_generator）
+                        const params = [name + '={{key}}'];
+                        for (const [hk, hv] of Object.entries(hiddenParams)) {
+                            params.push(hk + '=' + hv);
+                        }
+                        const paramStr = params.join('&');
                         const separator = searchUrl.includes('?') ? '&' : '?';
-                        result.url = searchUrl + separator + name + '={{key}}';
+                        result.url = searchUrl + separator + paramStr;
                         result.hasForm = true;
                         result.inputName = name;
                         result.isPost = false;
@@ -185,7 +220,7 @@ class BookSourceAnalyzer {
             }
         }
 
-        // 2. 查找搜索链接（如 /i/so.aspx）
+        // 2. 查找搜索链接
         const searchLinkSelectors = [
             'a[href*="so"]', 'a[href*="search"]', 'a[href*="s?key"]',
             'a[href*="s?word"]', 'a[href*="find"]', 'a[href*="query"]'
@@ -201,7 +236,6 @@ class BookSourceAnalyzer {
                     if (!searchPageUrl.startsWith('http')) {
                         searchPageUrl = (searchPageUrl.startsWith('/') ? baseUrl : baseUrl + '/') + searchPageUrl;
                     }
-                    // 返回搜索页面URL，让用户手动确认参数
                     result.url = searchPageUrl + '?key={{key}}';
                     result.hasForm = false;
                     return result;
@@ -245,7 +279,8 @@ class BookSourceAnalyzer {
     }
 
     /**
-     * 生成书源规则（阅读App v3.x 嵌套格式）
+     * 生成书源规则（阅读App v3.x 标准格式）
+     * 参考 auto_source_generator.generate_source() 方法
      */
     generateBookSource(url, name, doc, html, searchInfo) {
         // 构建嵌套规则
@@ -282,29 +317,26 @@ class BookSourceAnalyzer {
 
     /**
      * 构建搜索规则 (ruleSearch)
+     * 参考 auto_source_generator.JSOUPRuleExtractor.extract_search_rules()
      */
     buildSearchRule(doc, html) {
         const rule = {};
         
-        // 检测搜索结果列表容器
+        // 检测搜索结果列表容器（参考 auto_source_generator.find_book_list_container）
         const listSelectors = [
-            // 精确匹配
-            '.search-list', '.search_result', '.result-list', '.result-list',
+            '.search-list', '.search_result', '.result-list',
             '.book-list', '.booklist', '.books-list',
             '.novelslist', '.s-list', '.so-list',
-            // 通用
             '.list', '.item-list',
             'ul.list', 'ul.book-list',
-            // 最通用
             '.item', '.result-item',
-            // 表格
-            'table.grid', 'table.list'
+            'table.grid', 'table.list',
+            'ul.txt-list', 'div.search-result'
         ];
 
         for (const sel of listSelectors) {
             const el = doc.querySelector(sel);
             if (el) {
-                // 检查是否有多个子元素
                 const children = el.children.length > 0 ? el.children : el.querySelectorAll('li, tr, .item, div');
                 if (children.length >= 2) {
                     rule.bookList = sel;
@@ -315,12 +347,10 @@ class BookSourceAnalyzer {
 
         // 如果没找到，尝试更通用的选择器
         if (!rule.bookList) {
-            // 查找包含多个链接的容器
             const containers = doc.querySelectorAll('div.container, div.main, div.content, div.body');
             for (const container of containers) {
                 const links = container.querySelectorAll('a[href]');
                 if (links.length >= 5) {
-                    // 检查是否有重复结构
                     const items = container.querySelectorAll(':scope > div, :scope > ul > li, :scope > table > tr');
                     if (items.length >= 3) {
                         rule.bookList = container.tagName.toLowerCase() + 
@@ -335,15 +365,13 @@ class BookSourceAnalyzer {
             }
         }
 
-        // 检测书名
+        // 检测书名（参考 auto_source_generator._find_name_rule）
         if (rule.bookList) {
-            // 在列表项中查找链接
             const sampleItems = doc.querySelectorAll(rule.bookList);
             if (sampleItems.length > 0) {
                 const firstItem = sampleItems[0];
                 const links = firstItem.querySelectorAll('a[href]');
                 
-                // 找最可能是书名的链接（文本较长、没有数字特征）
                 let bestLink = null;
                 let bestScore = -1;
                 for (const link of links) {
@@ -351,9 +379,7 @@ class BookSourceAnalyzer {
                     const href = link.getAttribute('href') || '';
                     if (text.length >= 2 && text.length < 50) {
                         let score = text.length;
-                        // 优先选择包含数字ID路径的链接（如 /123/）
                         if (/\/\d+\//.test(href)) score += 10;
-                        // 优先选择文本不是纯数字的
                         if (!/^\d+$/.test(text)) score += 5;
                         if (score > bestScore) {
                             bestScore = score;
@@ -363,7 +389,6 @@ class BookSourceAnalyzer {
                 }
                 
                 if (bestLink) {
-                    // 确定唯一选择器
                     const tag = bestLink.tagName.toLowerCase();
                     const parentTag = bestLink.parentElement.tagName.toLowerCase();
                     const parentClass = bestLink.parentElement.className;
@@ -379,7 +404,7 @@ class BookSourceAnalyzer {
             }
         }
 
-        // 兜底：使用通用选择器
+        // 兜底
         if (!rule.bookList) {
             rule.bookList = 'div.item, li, tr';
         }
@@ -388,30 +413,82 @@ class BookSourceAnalyzer {
             rule.bookUrl = 'a@href';
         }
 
-        // 检测作者
+        // 检测作者（参考 auto_source_generator._find_author_rule）
         const authorSelectors = [
             '.author', 'p.author', 'span.author',
             '.bookauthor', '.book-author',
-            'td.author', 'td:nth-child(3)'
+            'td.author', 'td:nth-child(3)',
+            '.s4', '.au', '.writer', '.zz'
         ];
         for (const sel of authorSelectors) {
             const el = doc.querySelector(sel);
             if (el && el.textContent.trim()) {
+                let text = el.textContent.trim();
                 rule.author = sel;
+                // 如果包含"作者"前缀，添加替换规则
+                if (text.includes('作者')) {
+                    rule.author += '##作者：##';
+                }
                 break;
             }
         }
 
-        // 检测封面
+        // 检测封面（参考 auto_source_generator._find_cover_rule）
         const coverSelectors = [
             'img.cover', '.cover img', '.item img',
             'img[src*="cover"]', 'img[src*="book"]',
-            'li img', 'td img'
+            'li img', 'td img',
+            'img[data-src]'
         ];
         for (const sel of coverSelectors) {
             const el = doc.querySelector(sel);
             if (el) {
-                rule.coverUrl = sel + '@src';
+                // 优先使用data-src（懒加载）
+                if (el.getAttribute('data-src')) {
+                    rule.coverUrl = sel + '@data-src';
+                } else {
+                    rule.coverUrl = sel + '@src';
+                }
+                break;
+            }
+        }
+
+        // 检测最新章节（参考 auto_source_generator._find_last_chapter_rule）
+        const lastChapterSelectors = [
+            '.s3', '.last', '.chapter', '.new', '.update',
+            '.lastchapter', '.last-chapter',
+            '.newest', '.newchapter', '.new-chapter',
+            '.update .chapter', '.latest .chapter',
+            'span.last', 'p.last'
+        ];
+        for (const sel of lastChapterSelectors) {
+            const el = doc.querySelector(sel);
+            if (el && el.textContent.trim()) {
+                rule.lastChapter = sel;
+                break;
+            }
+        }
+
+        // 检测分类（参考 auto_source_generator._find_kind_rule）
+        const kindSelectors = [
+            '.s1', '.kind', '.category', '.type', '.sort'
+        ];
+        for (const sel of kindSelectors) {
+            const el = doc.querySelector(sel);
+            if (el && el.textContent.trim()) {
+                rule.kind = sel;
+                break;
+            }
+        }
+
+        // 检测简介（参考 auto_source_generator._find_intro_rule）
+        const introSelectors = [
+            '.intro', '.desc', '.summary', '.jianjie', '.jj'
+        ];
+        for (const sel of introSelectors) {
+            const el = doc.querySelector(sel);
+            if (el && el.textContent.trim().length > 20) {
+                rule.intro = sel;
                 break;
             }
         }
@@ -421,11 +498,12 @@ class BookSourceAnalyzer {
 
     /**
      * 构建书籍信息规则 (ruleBookInfo)
+     * 参考 auto_source_generator.JSOUPRuleExtractor.extract_book_info_rules()
      */
     buildBookInfoRule(doc) {
         const rule = {};
 
-        // 书名
+        // 书名（参考 auto_source_generator._find_detail_name_rule）
         const nameSelectors = [
             'meta[property="og:novel:book_name"]@content',
             'meta[property="og:title"]@content',
@@ -445,7 +523,7 @@ class BookSourceAnalyzer {
             }
         }
 
-        // 作者
+        // 作者（参考 auto_source_generator._find_detail_author_rule）
         const authorSelectors = [
             'meta[property="og:novel:author"]@content',
             '.author', '.bookauthor', '.writer',
@@ -459,17 +537,22 @@ class BookSourceAnalyzer {
                 const val = attr === 'content' ? el.getAttribute('content') : el.textContent;
                 if (val && val.trim()) {
                     rule.author = sel;
+                    // 如果包含"作者"前缀，添加替换规则
+                    if (val.includes('作者')) {
+                        rule.author += '##作者：##';
+                    }
                     break;
                 }
             }
         }
 
-        // 封面
+        // 封面（参考 auto_source_generator._find_detail_cover_rule）
         const coverSelectors = [
             'meta[property="og:image"]@content',
             '.cover img@src', '.bookcover img@src',
             '.bookimg img@src', '.pic img@src',
-            'img.cover@src'
+            'img.cover@src',
+            'img[data-src]@data-src'
         ];
         for (const sel of coverSelectors) {
             const [selector, attr] = sel.split('@');
@@ -483,27 +566,28 @@ class BookSourceAnalyzer {
             }
         }
 
-        // 简介
+        // 简介（参考 auto_source_generator._find_detail_intro_rule）
         const introSelectors = [
             'meta[property="og:description"]@content',
             'meta[name="description"]@content',
             '.intro', '.introduce', '.description',
             '.desc', '.bookdesc', '.summary',
-            '#intro', '#description'
+            '#intro', '#description',
+            '.jianjie', '#desc'
         ];
         for (const sel of introSelectors) {
             const [selector, attr] = sel.includes('@') ? sel.split('@') : [sel, 'text'];
             const el = doc.querySelector(selector);
             if (el) {
                 const val = attr === 'content' ? el.getAttribute('content') : el.textContent;
-                if (val && val.trim()) {
+                if (val && val.trim().length > 20) {
                     rule.intro = sel;
                     break;
                 }
             }
         }
 
-        // 分类
+        // 分类（参考 auto_source_generator._find_detail_kind_rule）
         const kindSelectors = [
             'meta[property="og:novel:category"]@content',
             '.kind', '.category', '.type',
@@ -522,7 +606,7 @@ class BookSourceAnalyzer {
             }
         }
 
-        // 最新章节
+        // 最新章节（参考 auto_source_generator._find_detail_last_chapter_rule）
         const lastChapterSelectors = [
             '.last', '.lastchapter', '.last-chapter',
             '.newest', '.newchapter', '.new-chapter',
@@ -537,16 +621,47 @@ class BookSourceAnalyzer {
             }
         }
 
+        // 字数（参考 auto_source_generator._find_word_count_rule）
+        const wordCountSelectors = [
+            '.wordcount', '.count', '.words',
+            'span.word', 'span.count'
+        ];
+        for (const sel of wordCountSelectors) {
+            const el = doc.querySelector(sel);
+            if (el && el.textContent.trim().includes('字')) {
+                rule.wordCount = sel;
+                break;
+            }
+        }
+
+        // 目录URL（参考 auto_source_generator._find_toc_url_rule）
+        const tocUrlSelectors = [
+            'a[href*="catalog"]', 'a[href*="chapter"]',
+            'a[href*="directory"]', 'a[href*="index"]',
+            'a[href*="list"]'
+        ];
+        for (const sel of tocUrlSelectors) {
+            const el = doc.querySelector(sel);
+            if (el) {
+                const text = el.textContent.trim();
+                if (text.includes('目录') || text.includes('阅读')) {
+                    rule.tocUrl = sel + '@href';
+                    break;
+                }
+            }
+        }
+
         return rule;
     }
 
     /**
      * 构建目录规则 (ruleToc)
+     * 参考 auto_source_generator.JSOUPRuleExtractor.extract_toc_rules()
      */
     buildTocRule(doc) {
         const rule = {};
 
-        // 章节列表容器
+        // 章节列表容器（参考 auto_source_generator._find_chapter_list_rule）
         const listSelectors = [
             '#list', '.list', '.chapter-list', '.chapters',
             '.chapterlist', '.chapter_list', '.catalog',
@@ -554,18 +669,18 @@ class BookSourceAnalyzer {
             '#chapters', '#chapter-list', '#catalog',
             'ul.chapter', 'ul.chapters', 'ul.list',
             'div[class*="list"]', 'div[id*="list"]',
-            'div[class*="chapter"]', 'div[id*="chapter"]'
+            'div[class*="chapter"]', 'div[id*="chapter"]',
+            'dl', 'dd'
         ];
 
         for (const sel of listSelectors) {
             const el = doc.querySelector(sel);
             if (el) {
-                const items = el.querySelectorAll('li, tr');
+                const items = el.querySelectorAll('li, tr, dd');
                 if (items.length >= 2) {
-                    rule.chapterList = sel + ' li, ' + sel + ' tr';
+                    rule.chapterList = sel + ' li, ' + sel + ' tr, ' + sel + ' dd';
                     break;
                 }
-                // 如果容器本身包含直接链接
                 const directLinks = el.querySelectorAll('a');
                 if (directLinks.length >= 2) {
                     rule.chapterList = sel + ' a';
@@ -576,7 +691,6 @@ class BookSourceAnalyzer {
 
         // 兜底
         if (!rule.chapterList) {
-            // 查找包含大量链接的区域
             const allLinks = doc.querySelectorAll('a[href]');
             const linkGroups = {};
             for (const link of allLinks) {
@@ -587,7 +701,6 @@ class BookSourceAnalyzer {
                 }
             }
             
-            // 找到链接最多的父容器
             let maxCount = 0;
             let bestKey = '';
             for (const [key, count] of Object.entries(linkGroups)) {
@@ -619,6 +732,7 @@ class BookSourceAnalyzer {
 
     /**
      * 构建内容规则 (ruleContent)
+     * 参考 auto_source_generator.JSOUPRuleExtractor.extract_content_rules()
      */
     buildContentRule(doc) {
         const rule = {};
@@ -647,8 +761,15 @@ class BookSourceAnalyzer {
             }
         }
 
-        // 内容替换规则（清理广告等）
-        rule.contentReplace = null;
+        // 内容替换规则（清理广告等，参考 auto_source_generator._find_ads_pattern）
+        const adsKeywords = [
+            '本章未完', '点击下一页', '手机阅读', '最新网址',
+            '请记住', '首发域名', '笔趣阁', '阅读更多'
+        ];
+        const foundAds = adsKeywords.filter(k => doc.body?.textContent?.includes(k));
+        if (foundAds.length > 0) {
+            rule.replaceRegex = '##' + foundAds.join('|') + '.*?##';
+        }
 
         return rule;
     }
