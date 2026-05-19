@@ -101,26 +101,30 @@ class BookSourceAnalyzer {
 
     /**
      * 检测搜索功能
-     * 返回 { url, hasForm, inputName }
+     * 返回 { url, hasForm, inputName, isPost, postBody }
      */
     detectSearch(url, doc, html) {
         const baseUrl = this.cleanUrl(url);
         let result = {
             url: '',
             hasForm: false,
-            inputName: 'key'
+            inputName: 'key',
+            isPost: false,
+            postBody: ''
         };
 
         // 1. 查找搜索表单
         const forms = doc.querySelectorAll('form');
         for (const form of forms) {
             const action = (form.getAttribute('action') || '').trim();
-            const inputs = form.querySelectorAll('input[type="text"], input[type="search"], input:not([type])');
+            const method = (form.getAttribute('method') || 'get').toLowerCase();
+            const inputs = form.querySelectorAll('input[type="text"], input[type="search"], input:not([type]), input[type="hidden"]');
             
             for (const input of inputs) {
                 const name = input.getAttribute('name') || '';
                 const placeholder = (input.getAttribute('placeholder') || '').toLowerCase();
                 const id = (input.id || '').toLowerCase();
+                const inputType = input.getAttribute('type') || 'text';
                 
                 // 判断是否是搜索输入框
                 const isSearch = /search|key|keyword|word|query|q|s|so|book|novel|小说|搜索/.test(name + placeholder + id);
@@ -141,11 +145,38 @@ class BookSourceAnalyzer {
                         searchUrl = window.location.href || baseUrl;
                     }
                     
-                    // 添加查询参数
-                    const separator = searchUrl.includes('?') ? '&' : '?';
-                    result.url = searchUrl + separator + name + '={{key}}';
-                    result.hasForm = true;
-                    result.inputName = name;
+                    if (method === 'post') {
+                        // POST请求：使用阅读App的api数组语法
+                        // 收集所有表单字段
+                        let bodyParts = [];
+                        const allInputs = form.querySelectorAll('input[name]');
+                        for (const fi of allInputs) {
+                            const fn = fi.getAttribute('name');
+                            const fv = fi.getAttribute('value') || '';
+                            if (fn === name) {
+                                bodyParts.push(fn + '={{key}}');
+                            } else if (fn && fv) {
+                                bodyParts.push(fn + '=' + fv);
+                            } else if (fn) {
+                                bodyParts.push(fn + '=');
+                            }
+                        }
+                        const body = bodyParts.join('&');
+                        
+                        // 阅读App POST搜索格式：URL,{"body":"key={{key}}","method":"POST"}
+                        result.url = searchUrl + ',{"body":"' + body + '","method":"POST"}';
+                        result.hasForm = true;
+                        result.inputName = name;
+                        result.isPost = true;
+                        result.postBody = body;
+                    } else {
+                        // GET请求：添加查询参数
+                        const separator = searchUrl.includes('?') ? '&' : '?';
+                        result.url = searchUrl + separator + name + '={{key}}';
+                        result.hasForm = true;
+                        result.inputName = name;
+                        result.isPost = false;
+                    }
                     return result;
                 }
             }
